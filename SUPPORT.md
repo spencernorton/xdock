@@ -1,8 +1,8 @@
 # Support
 
-- **Something is broken** — [open a bug report](https://github.com/spencercnorton/xdock/issues/new/choose).
-- **A question, or an idea** — [Discussions](https://github.com/spencercnorton/xdock/discussions).
-- **A security problem** — [private vulnerability reporting](https://github.com/spencercnorton/xdock/security/advisories/new), never a public issue. See [SECURITY.md](SECURITY.md).
+- **Something is broken** — [open a bug report](https://github.com/spencernorton/xdock/issues/new/choose).
+- **A question, or an idea** — [Discussions](https://github.com/spencernorton/xdock/discussions).
+- **A security problem** — [private vulnerability reporting](https://github.com/spencernorton/xdock/security/advisories/new), never a public issue. See [SECURITY.md](SECURITY.md).
 - **Documentation** — the README in this repository.
 
 This is one developer's project, maintained in the open; there is no
@@ -14,4 +14,4 @@ A problem that Dash to Dock has too is usually best reported to
 
 If this saves you time, you can [support its development](https://buy.stripe.com/8x26oH2U44f65TRe574wM04).
 
-XDock is part of [NorviOS](https://github.com/spencercnorton/norvi-os).
+XDock is part of [NorviOS](https://github.com/spencernorton/norvi-os).

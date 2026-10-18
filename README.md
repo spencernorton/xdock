@@ -6,15 +6,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/spencercnorton/norvi-os"><img alt="Part of NorviOS" src="https://img.shields.io/badge/NorviOS-component-FD8024.svg"></a>
-  <a href="https://github.com/spencercnorton/xdock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/spencercnorton/xdock/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/spencercnorton/xdock/tags"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencercnorton/xdock?label=release&sort=semver"></a>
+  <a href="https://github.com/spencernorton/norvi-os"><img alt="Part of NorviOS" src="https://img.shields.io/badge/NorviOS-component-FD8024.svg"></a>
+  <a href="https://github.com/spencernorton/xdock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/spencernorton/xdock/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/spencernorton/xdock/tags"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencercnorton/xdock?label=release&sort=semver"></a>
   <a href="#install"><img alt="Install for GNOME Shell" src="https://img.shields.io/badge/install-GNOME%20Shell-4a86cf.svg"></a>
   <a href="COPYING"><img alt="Licence" src="https://img.shields.io/badge/licence-GPL--2.0--or--later-blue.svg"></a>
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
 
-XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencercnorton/norvi-os) desktop and supports GNOME Shell 50.
+XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop and supports GNOME Shell 50.
 
 ## What it does
 
@@ -28,7 +28,7 @@ XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for
 
 **Motion that reads as one dock.** Icons lift on hover and press in when clicked, hop when an app starts, and bounce every few seconds while an app needs your attention. Showing and hiding the dock reverses smoothly from wherever it is. The animations switch off with GNOME's *Reduce Animation* setting, and GNOME turns them off itself when it draws the screen in software, as in most virtual machines; icons then stay still, and an app that needs attention does not bounce.
 
-**Glass behind the dock.** Where the dock's background is translucent, what is behind it shows through blurred, rounded to the dock's corners. The blur needs [GNOME Rounded Blur](https://github.com/spencercnorton/gnome-rounded-blur); without it the dock stays translucent, with no blur. With GNOME's and Ubuntu's own themes the background is opaque until you choose otherwise: in the preferences, under *Appearance*, set *Customize opacity* to *Fixed* and lower *Opacity*. The blur is on by default, with its own switch on the same page, and its strength and brightness are the `dock-blur-sigma` and `dock-blur-brightness` settings.
+**Glass behind the dock.** Where the dock's background is translucent, what is behind it shows through blurred, rounded to the dock's corners. The blur needs [GNOME Rounded Blur](https://github.com/spencernorton/gnome-rounded-blur); without it the dock stays translucent, with no blur. With GNOME's and Ubuntu's own themes the background is opaque until you choose otherwise: in the preferences, under *Appearance*, set *Customize opacity* to *Fixed* and lower *Opacity*. The blur is on by default, with its own switch on the same page, and its strength and brightness are the `dock-blur-sigma` and `dock-blur-brightness` settings.
 
 **Preferences on libadwaita.** The preferences window uses GNOME's current design, in pages for position and size, launchers, behaviour and appearance.
 
@@ -36,7 +36,7 @@ XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for
 
 ### GNOME Shell — the release zip
 
-Download `xdock.shell-extension.zip` and `SHA256SUMS.txt` from the [latest release](https://github.com/spencercnorton/xdock/releases/latest), then:
+Download `xdock.shell-extension.zip` and `SHA256SUMS.txt` from the [latest release](https://github.com/spencernorton/xdock/releases/latest), then:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS.txt
@@ -53,7 +53,7 @@ Turn off Dash to Dock or Ubuntu Dock first if you use one: two docks on the same
 
 ### Ubuntu 26.04 — the release package
 
-The same release carries `gnome-shell-extension-xdock_*_all.deb`, which installs the extension for every user and its settings schema and translations system-wide: `sudo apt install ./gnome-shell-extension-xdock_*_all.deb`. Then log out and in, and enable it as above. The package recommends `gnome-rounded-blur`, from the [GNOME Rounded Blur releases](https://github.com/spencercnorton/gnome-rounded-blur/releases/latest), which the dock blur needs.
+The same release carries `gnome-shell-extension-xdock_*_all.deb`, which installs the extension for every user and its settings schema and translations system-wide: `sudo apt install ./gnome-shell-extension-xdock_*_all.deb`. Then log out and in, and enable it as above. The package recommends `gnome-rounded-blur`, from the [GNOME Rounded Blur releases](https://github.com/spencernorton/gnome-rounded-blur/releases/latest), which the dock blur needs.
 
 The extension is not on extensions.gnome.org.
 
@@ -74,8 +74,8 @@ XDock opens no network connections. The launcher ranks apps by GNOME's own usage
 
 ## Contributing and support
 
-- Bugs and feature requests: [open an issue](https://github.com/spencercnorton/xdock/issues/new/choose). Questions: [Discussions](https://github.com/spencercnorton/xdock/discussions).
-- Security reports: [private vulnerability reporting](https://github.com/spencercnorton/xdock/security/advisories/new). See [SECURITY.md](SECURITY.md). There is no e-mail address; that is deliberate.
+- Bugs and feature requests: [open an issue](https://github.com/spencernorton/xdock/issues/new/choose). Questions: [Discussions](https://github.com/spencernorton/xdock/discussions).
+- Security reports: [private vulnerability reporting](https://github.com/spencernorton/xdock/security/advisories/new). See [SECURITY.md](SECURITY.md). There is no e-mail address; that is deliberate.
 - Pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first. Changes are reviewed and merged on GitHub, then shipped in tagged releases.
 - If this saves you time, you can [support its development](https://buy.stripe.com/8x26oH2U44f65TRe574wM04).
 
