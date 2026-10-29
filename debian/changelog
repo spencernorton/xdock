@@ -1,3 +1,12 @@
+gnome-shell-extension-xdock (2.1.0) resolute; urgency=medium
+
+  * Publish launcher redraw and drag fixes and optional icon magnification.
+  * Keep native actors and asynchronous file-manager completions safe at
+    teardown.
+  * Require native popup, drag, magnification and idle acceptance in CI.
+
+ -- Norvi <apt@globalentry.systems>  Thu, 29 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-xdock (2.1.0~mag1) resolute; urgency=medium
 
   * Add macOS-style icon magnification and let dock animations leave the dock.

@@ -4,6 +4,12 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+## 2.1.0 — 2026-10-29
+
+- Publish the launcher redraw, drag handoff and optional icon magnification
+  improvements from the preview builds below.
+- Keep detached dock actors, floating labels and scroll adjustments safe while
+  settings rebuild the dock, and ignore D-Bus completions after teardown.
 - Require native dock reorder, launcher drops and magnification in the existing
   private GNOME Shell acceptance job, retaining logs on failure.
 
