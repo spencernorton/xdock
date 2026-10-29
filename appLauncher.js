@@ -1596,7 +1596,7 @@ export class AppGridLauncher {
                 }),
             });
 
-            const scrollView = new St.ScrollView({
+            const scrollView = new Utils.DockScrollView({
                 style_class: 'xdock-app-grid-launcher-scroll',
                 hscrollbar_policy: St.PolicyType.NEVER,
                 vscrollbar_policy: St.PolicyType.AUTOMATIC,
@@ -1792,6 +1792,7 @@ export class AppGridLauncher {
                 opacity: 0,
             });
             hoverLabel.hide();
+            Utils.deferActorDestroy(hoverLabel);
             Utils.addActor(Main.uiGroup, hoverLabel);
 
             // Commit only the complete actor graph. A failure above leaves all

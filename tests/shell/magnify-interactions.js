@@ -169,5 +169,8 @@ export async function run() {
         settings.set_double('magnify-range-factor', saved.range);
         settings.set_int('magnify-duration', saved.duration);
         Main.panel.statusArea.dateMenu.visible = dateMenuVisible;
+        // Restoring position queues a dock replacement. Exercise its deferred
+        // layout before the observer declares success or terminates Shell.
+        await wait(700);
     }
 }

@@ -62,6 +62,7 @@ class DockDashItemContainer extends Dash.DashItemContainer {
     _init(position) {
         super._init();
 
+        Utils.deferActorDestroy(this.label);
         this.label?.add_style_class_name(Theming.PositionStyleClass[position]);
         if (Docking.DockManager.settings.customThemeShrink)
             this.label?.add_style_class_name('shrink');
@@ -232,7 +233,7 @@ export const DockDash = GObject.registerClass({
             x_expand: !this._isHorizontal,
         });
 
-        this._scrollView = new St.ScrollView({
+        this._scrollView = new Utils.DockScrollView({
             name: 'xdockDashScrollview',
             hscrollbar_policy: this._isHorizontal ? St.PolicyType.EXTERNAL : St.PolicyType.NEVER,
             vscrollbar_policy: this._isHorizontal ?  St.PolicyType.NEVER : St.PolicyType.EXTERNAL,
@@ -372,6 +373,11 @@ export const DockDash = GObject.registerClass({
     }
 
     vfunc_get_preferred_height(forWidth) {
+        // Overview can request the replacement dash during startup, before
+        // LayoutManager adds its dock to the stage. St cannot resolve a theme
+        // node until then; the first staged allocation measures it again.
+        if (!this.get_stage())
+            return [0, 0];
         const [minHeight, natHeight] = super.vfunc_get_preferred_height.call(this, forWidth);
         if (!this._isHorizontal && this._maxHeight !== -1 && natHeight > this._maxHeight)
             return [minHeight, this._maxHeight];
@@ -380,6 +386,8 @@ export const DockDash = GObject.registerClass({
     }
 
     vfunc_get_preferred_width(forHeight) {
+        if (!this.get_stage())
+            return [0, 0];
         const [minWidth, natWidth] = super.vfunc_get_preferred_width.call(this, forHeight);
         if (this._isHorizontal && this._maxWidth !== -1 && natWidth > this._maxWidth)
             return [minWidth, this._maxWidth];

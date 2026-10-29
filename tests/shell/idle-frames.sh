@@ -46,7 +46,7 @@ dbus-run-session -- bash -c '
     gsettings set org.gnome.shell welcome-dialog-last-shown-version "999"
     gsettings set org.gnome.shell enabled-extensions \
         "[\"xdock@spencercnorton.github.io\", \"idle-frames@xdock.test\"]"
-    gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &
+    G_DEBUG=fatal-criticals gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &
     shell=$!
     for _ in $(seq 180); do
         grep -q "IDLE-FRAMES done" "$1" && break
@@ -58,7 +58,7 @@ dbus-run-session -- bash -c '
 ' bash "$log" || true
 
 cat "$log"
-if grep -q "JS ERROR:" "$log"; then
+if grep -E 'JS ERROR:|-CRITICAL' "$log"; then
     exit 1
 fi
 if ! grep -q "IDLE-FRAMES done" "$log"; then

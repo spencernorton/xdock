@@ -531,6 +531,26 @@ const XDock = GObject.registerClass({
         }
     }
 
+    // A layout pass queued before a settings rebuild can still measure the
+    // detached dock. St's default measurement needs a stage theme context.
+    vfunc_get_preferred_height(forWidth) {
+        if (!this._lifecycle || this._lifecycle.destroying || this._lifecycle.destroyed || !this.get_stage())
+            return [0, 0];
+        return super.vfunc_get_preferred_height(forWidth);
+    }
+
+    vfunc_get_preferred_width(forHeight) {
+        if (!this._lifecycle || this._lifecycle.destroying || this._lifecycle.destroyed || !this.get_stage())
+            return [0, 0];
+        return super.vfunc_get_preferred_width(forHeight);
+    }
+
+    vfunc_allocate(box) {
+        if (!this._lifecycle || this._lifecycle.destroying || this._lifecycle.destroyed || !this.get_stage())
+            return;
+        super.vfunc_allocate(box);
+    }
+
     get position() {
         return this._position;
     }
@@ -609,6 +629,10 @@ const XDock = GObject.registerClass({
 
     _cleanup() {
         const errors = runCleanupTasks([
+            // Our destroy handler runs before LayoutManager's. Disposing the
+            // children can synchronously update struts after Clutter has
+            // detached the dock; stop tracking it before those notifications.
+            ['chrome tracking', () => Main.layoutManager.untrackChrome(this)],
             // Cancel the delayed-hide source and active slide transition while
             // the slider and dependent actors are still alive. Retain the
             // controller if cancellation itself fails so the error remains
@@ -1960,9 +1984,14 @@ export class DockManager {
         this._startupOverviewOverride = new RestorableValue(
             () => Main.sessionMode.hasOverview,
             value => (Main.sessionMode.hasOverview = value));
+        // Replacing docks from BEFORE_REDRAW can invalidate actors already in
+        // Clutter's layout snapshot. Own the replacement in a normal idle.
         this._toggleTask = new DeferredTask(
-            callback => Utils.laterAdd(Meta.LaterType.BEFORE_REDRAW, callback),
-            id => Utils.laterRemove(id));
+            callback => GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                callback();
+                return GLib.SOURCE_REMOVE;
+            }),
+            id => GLib.source_remove(id));
 
         // Some child constructors use the static DockManager accessors. Publish
         // provisionally, then synchronously roll back on every initialization
@@ -2591,7 +2620,8 @@ export class DockManager {
         // And to return the preferred height depending on the state
         this._methodInjections.addWithLabel(Labels.MAIN_DASH, this._oldDash,
             'get_preferred_height', (_originalMethod, ...args) => {
-                if (this.mainDock.isHorizontal && !this.settings.dockFixed)
+                if (this.mainDock.get_stage() && this.mainDock.isHorizontal &&
+                    !this.settings.dockFixed)
                     return this.mainDock.get_preferred_height(...args);
                 return [0, 0];
             });
@@ -2622,7 +2652,8 @@ export class DockManager {
         const maybeAdjustBoxToDock = (state, box, spacing) => {
             maybeAdjustBoxSize(state, box, spacing);
 
-            if (this.mainDock.isHorizontal || this.settings.dockFixed)
+            if (!this.mainDock.get_stage() || this.mainDock.isHorizontal ||
+                this.settings.dockFixed)
                 return box;
 
             const [, preferredWidth] = this.mainDock.get_preferred_width(

@@ -234,5 +234,6 @@ export async function run() {
         settings.set_enum('dock-position', position);
         settings.set_boolean('dock-fixed', fixed);
         Main.panel.statusArea.dateMenu.visible = dateMenuVisible;
+        await wait(700);
     }
 }
