@@ -39,6 +39,8 @@ jobs:
           persist-credentials: false
       - name: Checks
         run: make verify REQUIRE_GJS=1
+      - name: Compositor exit regression checks
+        run: python3 -m unittest discover -s tests/shell -p 'test_*.py'
       - name: Shell scripts
         run: shellcheck scripts/*.sh tests/shell/*.sh
       - name: Build twice and compare

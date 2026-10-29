@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Fail native acceptance on unexpected compositor exit, including shutdown crashes.
+
 ## 2.1.1 — 2026-10-29
 
 - Stop cancelled trash queries from falling through after dock teardown, ignore

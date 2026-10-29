@@ -41,23 +41,25 @@ ENTRY
 done
 
 log="$home/shell.log"
+session_status=0
 # shellcheck disable=SC2016 # expanded by the inner shell
-dbus-run-session -- bash -c '
+timeout --foreground --kill-after=10s 240s dbus-run-session -- bash -euo pipefail -c '
     gsettings set org.gnome.shell welcome-dialog-last-shown-version "999"
     gsettings set org.gnome.shell enabled-extensions \
         "[\"idle-frames@xdock.test\", \"xdock@spencercnorton.github.io\"]"
     G_DEBUG=fatal-criticals gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &
     shell=$!
+    source "$2/stop-shell.sh"
+    trap '\''finish_shell "$?" "$shell" "$1.exit"'\'' EXIT
     for _ in $(seq 180); do
         grep -q "IDLE-FRAMES done" "$1" && break
         kill -0 "$shell" 2>/dev/null || break
         sleep 1
     done
-    kill "$shell" 2>/dev/null
-    wait
-' bash "$log" || true
+' bash "$log" "$(dirname "$probe")" || session_status=$?
 
 cat "$log"
+test "$session_status" -eq 0
 if grep -E 'JS ERROR:|-CRITICAL' "$log"; then
     exit 1
 fi
