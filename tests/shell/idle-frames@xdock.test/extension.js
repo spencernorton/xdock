@@ -14,6 +14,8 @@ import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {run as popupInteractions} from '../popup-interactions.js';
+import {run as magnifyInteractions} from '../magnify-interactions.js';
 
 const XDOCK = 'xdock@spencercnorton.github.io';
 
@@ -147,6 +149,8 @@ export default class IdleFramesProbe extends Extension {
         global.force_animations = false;
 
         notes.forEach(note => note.actor?.remove_effect(note));
+        report('popup interactions', JSON.stringify(await popupInteractions()));
+        report('magnify interactions', JSON.stringify(await magnifyInteractions()));
         report('result', failed ? 'fail' : 'pass');
     }
 }

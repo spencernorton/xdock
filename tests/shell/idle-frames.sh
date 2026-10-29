@@ -12,7 +12,8 @@ home=$(mktemp -d)
 trap 'rm -rf "$home"' EXIT
 export HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" \
     XDG_CACHE_HOME="$home/cache" XDG_STATE_HOME="$home/state" \
-    XDG_RUNTIME_DIR="$home/run" XDG_CURRENT_DESKTOP=GNOME
+    XDG_RUNTIME_DIR="$home/run" XDG_CURRENT_DESKTOP=GNOME GNOME_SHELL_DEV_HARNESS=1 \
+    LIBGL_ALWAYS_SOFTWARE=1
 mkdir -m 0700 "$XDG_RUNTIME_DIR"
 installed="$XDG_DATA_HOME/gnome-shell/extensions"
 mkdir -p "$installed/xdock@spencercnorton.github.io"
@@ -22,6 +23,22 @@ else
     unzip -q "$extension" -d "$installed/xdock@spencercnorton.github.io"
 fi
 cp -r "$probe" "$installed/"
+cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
+    "$installed/"
+# Real desktop entries let Shell's application system populate the launcher;
+# no application or data from the host session is used.
+mkdir -p "$XDG_DATA_HOME/applications"
+for i in $(seq 0 79); do
+    number=$(printf '%02d' "$i")
+    cat > "$XDG_DATA_HOME/applications/xdock-popup-test-$number.desktop" <<ENTRY
+[Desktop Entry]
+Type=Application
+Name=Popup Test $number
+Exec=/usr/bin/true
+Icon=applications-utilities-symbolic
+Categories=Utility;
+ENTRY
+done
 
 log="$home/shell.log"
 # shellcheck disable=SC2016 # expanded by the inner shell
@@ -40,10 +57,14 @@ dbus-run-session -- bash -c '
     wait
 ' bash "$log" || true
 
+cat "$log"
+if grep -q "JS ERROR:" "$log"; then
+    exit 1
+fi
 if ! grep -q "IDLE-FRAMES done" "$log"; then
     tail -n 40 "$log"
     echo "GNOME Shell did not finish the run" >&2
     exit 1
 fi
 grep "IDLE-FRAMES" "$log" | sed 's/.*IDLE-FRAMES //'
-grep -q "IDLE-FRAMES result: pass" "$log"
+test "$(grep -c "IDLE-FRAMES result: pass" "$log")" -eq 1
