@@ -44,6 +44,9 @@ export async function run() {
     const clips = [];
     const result = {drops: []};
 
+    pointer.notify_absolute_motion(GLib.get_monotonic_time(), 600, 400);
+    await wait(150);
+
     try {
         settings.set_boolean('dock-fixed', true);
         settings.set_enum('dock-position', St.Side.BOTTOM);
@@ -86,10 +89,19 @@ export async function run() {
         }
         check(!!dockIcons[0]._dragging, 'dock icon drag must start');
         check(!!dash._dragPlaceholder, 'drag over the dock must show a placeholder');
+        // Shell's placeholder includes the source icon. Removing that icon
+        // shifts a later drop slot left by one; the live layout can put the
+        // placeholder before or after the target icon's center.
+        const before = global.settings.get_strv('favorite-apps');
+        const originalIndex = before.indexOf(draggedId);
+        const dropIndex = dash._dragPlaceholderPos - (originalIndex < dash._dragPlaceholderPos ? 1 : 0);
+        check(dropIndex !== originalIndex, 'the reorder gesture must target a different slot');
+        const expectedOrder = before.filter(id => id !== draggedId);
+        expectedOrder.splice(dropIndex, 0, draggedId);
         button(Clutter.ButtonState.RELEASED);
         pressed = false;
         await wait(600);
-        check(global.settings.get_strv('favorite-apps')[2] === draggedId,
+        check(JSON.stringify(global.settings.get_strv('favorite-apps')) === JSON.stringify(expectedOrder),
             'drop must move the favorite to the placeholder position');
         result.reorder = 'pass';
         global.settings.set_strv('favorite-apps', ['xdock-popup-test-00.desktop']);

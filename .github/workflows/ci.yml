@@ -52,7 +52,7 @@ jobs:
           mkdir -p dist/deb dist/zip
           cp /tmp/one/*.deb dist/deb/
           cp /tmp/one/*.zip dist/zip/
-          (cd dist/deb && sha256sum *.deb > SHA256SUMS.txt)
+          (cd dist/deb && sha256sum -- *.deb > SHA256SUMS.txt)
       - name: Lintian
         run: lintian --fail-on error,warning dist/deb/*.deb
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -85,7 +85,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: A still screen paints nothing
+      - name: Dock interactions, magnification and a still screen
+        shell: bash
         run: |
           make _build
           # A container has no logind. Without /run/systemd/seats GNOME Shell
@@ -94,4 +95,11 @@ jobs:
           mkdir -p /run/dbus
           dbus-daemon --system --fork
           useradd --create-home tester
-          runuser -u tester -- tests/shell/idle-frames.sh _build
+          runuser -u tester -- tests/shell/idle-frames.sh _build 2>&1 | tee shell-runtime.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: shell-runtime-evidence
+          path: shell-runtime.log
+          if-no-files-found: warn
+          retention-days: 14

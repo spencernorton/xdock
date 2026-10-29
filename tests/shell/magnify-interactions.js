@@ -24,7 +24,7 @@ export async function run() {
     check(extension?.state === 1, 'XDock must be active');
     const {DockManager} = await import(`file://${extension.path}/docking.js`);
     const manager = DockManager.getDefault();
-    const dash = manager.mainDock.dash;
+    let dash = manager.mainDock.dash;
     const settings = extension.stateObj.getSettings('org.gnome.shell.extensions.xdock');
     const favorites = global.settings.get_strv('favorite-apps');
     const seat = global.stage.get_context().get_backend().get_default_seat();
@@ -51,6 +51,9 @@ export async function run() {
     let pressed = false;
     const result = {};
 
+    pointer.notify_absolute_motion(GLib.get_monotonic_time(), 600, 400);
+    await wait(150);
+
     try {
         settings.set_boolean('dock-fixed', true);
         settings.set_enum('dock-position', St.Side.BOTTOM);
@@ -70,6 +73,9 @@ export async function run() {
         move(100, 100);
         await wait(700);
 
+        // Position/fixed changes rebuild the dock; observe the current native
+        // instance after those settings and the favorites update have landed.
+        dash = manager.mainDock.dash;
         const icons = dash.getAppIcons();
         check(icons.length >= 6, 'magnification needs at least six dock icons');
         const restWidth = dash._box.get_transformed_size()[0];

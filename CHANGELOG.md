@@ -2,6 +2,11 @@
 
 All notable changes to XDock are documented here.
 
+## Unreleased
+
+- Require native dock reorder, launcher drops and magnification in the existing
+  private GNOME Shell acceptance job, retaining logs on failure.
+
 ## 2.1.0~mag1 — 2026-10-14
 
 - Magnify the icons under the pointer, macOS-style: the icon under the pointer grows to twice its size, its neighbours less, and the row widens around the pointer. Off by default; switch it on in the preferences, where the size, reach and response time can also be set.
