@@ -25,6 +25,7 @@ const Labels = Object.freeze({
  */
 export class FileManager1Client {
     constructor() {
+        this._destroyed = false;
         this._signalsHandler = new Utils.GlobalSignalsHandler();
         this._cancellable = new Gio.Cancellable();
 
@@ -35,6 +36,11 @@ export class FileManager1Client {
             '/org/freedesktop/FileManager1',
             (initable, error) => {
             // Use async construction to avoid blocking on errors.
+                // Cancellation cannot retract a successful completion already
+                // dispatched by GIO. Teardown may have cleared the proxy while
+                // that callback was waiting for its turn in the main loop.
+                if (this._destroyed)
+                    return;
                 if (error) {
                     if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                         logError(error);
@@ -70,6 +76,9 @@ export class FileManager1Client {
     }
 
     destroy() {
+        if (this._destroyed)
+            return;
+        this._destroyed = true;
         if (this._windowsUpdateIdle) {
             GLib.source_remove(this._windowsUpdateIdle);
             delete this._windowsUpdateIdle;
@@ -119,11 +128,11 @@ export class FileManager1Client {
     }
 
     _onWindowsChanged() {
-        if (this._windowsUpdateIdle)
+        if (this._destroyed || this._windowsUpdateIdle)
             return;
 
         this._windowsUpdateIdle = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            if (this._updateWindows())
+            if (!this._destroyed && this._updateWindows())
                 this._updateLocationMap();
 
             delete this._windowsUpdateIdle;
