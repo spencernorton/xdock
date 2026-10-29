@@ -876,7 +876,7 @@ class TrashAppInfo extends LocationAppInfo {
             this._schedUpdateId = 0;
         }
 
-        if (this._monitor.is_cancelled())
+        if (!this._monitor || this._monitor.is_cancelled())
             return;
 
         this._schedUpdateId = GLib.timeout_add(GLib.PRIORITY_LOW,
@@ -888,41 +888,56 @@ class TrashAppInfo extends LocationAppInfo {
     }
 
     async _updateTrash() {
+        const {location} = this;
+        if (!location || this.cancellable?.is_cancelled())
+            return;
+
         const priority = GLib.PRIORITY_LOW;
         this._updateTrashCancellable?.cancel();
         const cancellable = new Utils.CancellableChild(this.cancellable);
         this._updateTrashCancellable = cancellable;
+        let childrenEnumerator;
 
         try {
-            const trashInfo = await this.location.query_info_async(
-                Gio.FILE_ATTRIBUTE_TRASH_ITEM_COUNT,
-                Gio.FileQueryInfoFlags.NONE,
-                priority, cancellable);
-            this.empty = !trashInfo.get_attribute_uint32(
-                Gio.FILE_ATTRIBUTE_TRASH_ITEM_COUNT);
-            return;
-        } catch (e) {
-            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                logError(e, 'Impossible to get trash children from infos');
-        } finally {
-            cancellable.cancel();
-            if (this._updateTrashCancellable === cancellable)
-                delete this._updateTrashCancellable;
-        }
+            try {
+                const trashInfo = await location.query_info_async(
+                    Gio.FILE_ATTRIBUTE_TRASH_ITEM_COUNT,
+                    Gio.FileQueryInfoFlags.NONE,
+                    priority, cancellable);
+                if (!cancellable.is_cancelled()) {
+                    this.empty = !trashInfo.get_attribute_uint32(
+                        Gio.FILE_ATTRIBUTE_TRASH_ITEM_COUNT);
+                }
+                return;
+            } catch (e) {
+                // Teardown must not start a fallback on the cleared location.
+                if (cancellable.is_cancelled() ||
+                    e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    return;
+                if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_SUPPORTED))
+                    logError(e, 'Impossible to get trash children from infos');
+            }
 
-        try {
-            const childrenEnumerator = await this.location.enumerate_children_async(
+            childrenEnumerator = await location.enumerate_children_async(
                 Gio.FILE_ATTRIBUTE_STANDARD_TYPE, Gio.FileQueryInfoFlags.NONE,
                 priority, cancellable);
             const children = await childrenEnumerator.next_files_async(1,
                 priority, cancellable);
-            this.empty = !children.length;
-
-            await childrenEnumerator.close_async(priority, null);
+            if (!cancellable.is_cancelled())
+                this.empty = !children.length;
         } catch (e) {
-            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+            if (!cancellable.is_cancelled() &&
+                !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                 logError(e, 'Impossible to enumerate trash children');
         } finally {
+            // The fallback owns its enumerator even if next_files was cancelled.
+            if (childrenEnumerator) {
+                try {
+                    await childrenEnumerator.close_async(priority, null);
+                } catch (e) {
+                    logError(e, 'Impossible to close trash enumerator');
+                }
+            }
             cancellable.cancel();
             if (this._updateTrashCancellable === cancellable)
                 delete this._updateTrashCancellable;

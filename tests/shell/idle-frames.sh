@@ -45,7 +45,7 @@ log="$home/shell.log"
 dbus-run-session -- bash -c '
     gsettings set org.gnome.shell welcome-dialog-last-shown-version "999"
     gsettings set org.gnome.shell enabled-extensions \
-        "[\"xdock@spencercnorton.github.io\", \"idle-frames@xdock.test\"]"
+        "[\"idle-frames@xdock.test\", \"xdock@spencercnorton.github.io\"]"
     G_DEBUG=fatal-criticals gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &
     shell=$!
     for _ in $(seq 180); do

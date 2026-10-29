@@ -4,6 +4,12 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+## 2.1.1 — 2026-10-29
+
+- Stop cancelled trash queries from falling through after dock teardown, ignore
+  late results, and close fallback enumerators on cancellation.
+- Exercise rapid disable/re-enable with real GIO work in native GNOME CI.
+
 ## 2.1.0 — 2026-10-29
 
 - Publish the launcher redraw, drag handoff and optional icon magnification
