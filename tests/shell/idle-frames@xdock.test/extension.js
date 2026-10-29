@@ -66,6 +66,11 @@ async function dash() {
 
 export default class IdleFramesProbe extends Extension {
     enable() {
+        // Disabling an earlier extension can rebase this observer too. Its
+        // current async run deliberately spans those real lifecycle changes.
+        if (this._running)
+            return;
+        this._running = true;
         const run = () => this._run()
             .catch(error => report('result', `fail: ${error}\n${error.stack}`))
             .finally(() => report('done', 'yes'));
@@ -151,6 +156,16 @@ export default class IdleFramesProbe extends Extension {
         notes.forEach(note => note.actor?.remove_effect(note));
         report('popup interactions', JSON.stringify(await popupInteractions()));
         report('magnify interactions', JSON.stringify(await magnifyInteractions()));
+        // Cancel genuine GIO trash/proxy work immediately after each enable,
+        // including successful operations whose callbacks are already queued.
+        for (let cycle = 0; cycle < 3; cycle++) {
+            await Main.extensionManager.disableExtension(XDOCK);
+            await Main.extensionManager.enableExtension(XDOCK);
+        }
+        await wait(500);
+        if (Main.extensionManager.lookup(XDOCK)?.state !== 1)
+            throw new Error('XDock did not survive rapid disable/re-enable');
+        report('rapid lifecycle', '3 cycles');
         report('result', failed ? 'fail' : 'pass');
     }
 }

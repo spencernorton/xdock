@@ -1,3 +1,10 @@
+gnome-shell-extension-xdock (2.1.1) resolute; urgency=medium
+
+  * Keep cancelled trash queries and fallback enumerators safe at teardown.
+  * Exercise rapid disable/re-enable with real GIO work in native GNOME CI.
+
+ -- Norvi <apt@globalentry.systems>  Thu, 29 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-xdock (2.1.0) resolute; urgency=medium
 
   * Publish launcher redraw and drag fixes and optional icon magnification.
