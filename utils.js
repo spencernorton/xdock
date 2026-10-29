@@ -397,6 +397,50 @@ export class ColorUtils {
  * Manage function injection: both instances and prototype can be overridden
  * and restored
  */
+// StScrollView disposes its adjustments before its actor tree has finished
+// destroying. A sibling label's theme invalidation can then re-enter
+// style_changed and recreate the fade effect with NULL adjustments (Shell 50).
+// Keep normal styling while alive and stop native styling at the destroy
+// boundary, before StScrollView releases those adjustments.
+export const DockScrollView = GObject.registerClass(
+class DockScrollView extends St.ScrollView {
+    _init(params = {}) {
+        super._init(params);
+        this._styleAlive = true;
+        this.connect('destroy', () => (this._styleAlive = false));
+    }
+
+    vfunc_style_changed() {
+        if (this._styleAlive)
+            super.vfunc_style_changed();
+    }
+});
+
+// Clutter snapshots its pending relayout list. A floating label destroyed by
+// an icon's layout/theme callback can still be in that snapshot. Keep its
+// native text alive until the layout returns, then dispose it in an idle.
+export function deferActorDestroy(actor) {
+    const destroy = actor.destroy.bind(actor);
+    let pending = 0;
+    let destroyed = false;
+    actor.connect('destroy', () => {
+        destroyed = true;
+        if (pending)
+            GLib.source_remove(pending);
+        pending = 0;
+    });
+    actor.destroy = () => {
+        if (destroyed || pending)
+            return;
+        actor.hide();
+        pending = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            pending = 0;
+            destroy();
+            return GLib.SOURCE_REMOVE;
+        });
+    };
+}
+
 export class InjectionsHandler extends BasicHandler {
     _create(object, name, injectedFunction) {
         const original = object[name];

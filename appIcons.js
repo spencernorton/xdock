@@ -1732,6 +1732,7 @@ export const DockShowAppsIcon = GObject.registerClass({
         this.toggleButton._removeMenuTimeout = (...args) =>
             this._removeMenuTimeout(...args);
 
+        Utils.deferActorDestroy(this.label);
         this.label?.add_style_class_name(Theming.PositionStyleClass[position]);
         if (Docking.DockManager.settings.customThemeShrink)
             this.label?.add_style_class_name('shrink');

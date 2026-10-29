@@ -81,7 +81,7 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends ca-certificates make gettext sassc unzip libglib2.0-bin \
             gnome-shell gnome-shell-common dbus dbus-bin dbus-daemon libgl1-mesa-dri libegl-mesa0 \
-            gsettings-desktop-schemas xwayland at-spi2-core
+            gsettings-desktop-schemas xwayland at-spi2-core gvfs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
