@@ -8,11 +8,16 @@
 <p align="center">
   <a href="https://github.com/spencernorton/norvi-os"><img alt="Part of NorviOS" src="https://img.shields.io/badge/NorviOS-component-FD8024.svg"></a>
   <a href="https://github.com/spencernorton/xdock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/spencernorton/xdock/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/spencernorton/xdock/tags"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencercnorton/xdock?label=release&sort=semver"></a>
+  <a href="https://github.com/spencernorton/xdock/tags"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencernorton/xdock?label=release&sort=semver"></a>
   <a href="#install"><img alt="Install for GNOME Shell" src="https://img.shields.io/badge/install-GNOME%20Shell-4a86cf.svg"></a>
   <a href="COPYING"><img alt="Licence" src="https://img.shields.io/badge/licence-GPL--2.0--or--later-blue.svg"></a>
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
+
+<p align="center"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/demos/launcher-still.png"><img src="docs/demos/launcher.gif" alt="Open XDock’s compact launcher, browse applications and search for a note app." width="900"></picture></p>
+
+Recorded in a disposable NorviOS desktop with a demonstration account. [Recording sources and stills](docs/demos/README.md).
+
 
 XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop and supports GNOME Shell 50.
 
@@ -31,6 +36,8 @@ XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for
 **Glass behind the dock.** Where the dock's background is translucent, what is behind it shows through blurred, rounded to the dock's corners. The blur needs [GNOME Rounded Blur](https://github.com/spencernorton/gnome-rounded-blur); without it the dock stays translucent, with no blur. With GNOME's and Ubuntu's own themes the background is opaque until you choose otherwise: in the preferences, under *Appearance*, set *Customize opacity* to *Fixed* and lower *Opacity*. The blur is on by default, with its own switch on the same page, and its strength and brightness are the `dock-blur-sigma` and `dock-blur-brightness` settings.
 
 **Preferences on libadwaita.** The preferences window uses GNOME's current design, in pages for position and size, launchers, behaviour and appearance.
+
+<p align="center"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/demos/drawers-still.png"><img src="docs/demos/drawers.gif" alt="Create an application drawer, add an app and open the drawer from the launcher." width="900"></picture></p>
 
 ## Install
 
