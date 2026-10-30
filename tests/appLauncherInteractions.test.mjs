@@ -17,12 +17,17 @@ globalThis.launcherTestLoop = {
 };
 const gi = dataUrl(`
 export const AccountsService = {}, Atk = {}, Gio = {}, Meta = {}, Shell = {};
-export const St = {Settings: {get: () => ({enable_animations: true})}};
+export const St = {Settings: {get: () => ({enable_animations: globalThis.launcherAnimationsEnabled ?? true})}};
 export const GObject = {registerClass: klass => klass};
 export const GLib = {...globalThis.launcherTestLoop, PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false};
 export const Clutter = {
     AnimationMode: {EASE_IN_CUBIC: 1, EASE_OUT_CUBIC: 2},
     ModifierType: {CONTROL_MASK: 1, SHIFT_MASK: 2},
+    EventFlags: {FLAG_POINTER_EMULATED: 1},
+    ScrollDirection: {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3, SMOOTH: 4},
+    ScrollSource: {WHEEL: 0, FINGER: 1},
+    EVENT_PROPAGATE: false,
+    EVENT_STOP: true,
 };
 `);
 const ui = dataUrl(`
@@ -85,6 +90,131 @@ function dispatch(id) {
     callbacks.delete(id);
     callback();
 }
+
+function scrollLauncher(value = 300) {
+    const instance = launcher();
+    const adjustment = {
+        value, lower: 0, upper: 2000, page_size: 1000,
+        transition: null,
+        ease(target, options) {
+            this.transition = {target, ...options};
+            if (options.duration === 0) {
+                this.value = target;
+                this.finish();
+            }
+        },
+        finish() {
+            const transition = this.transition;
+            this.value = transition.target;
+            this.transition = null;
+            transition.onComplete();
+        },
+        remove_transition(name) {
+            assert.equal(name, 'value');
+            this.transition = null;
+        },
+    };
+    instance._scrollView = {vadjustment: adjustment, height: 1000};
+    return {instance, adjustment};
+}
+
+const scrollEvent = (direction, {delta = 0, source: scrollSource = 0, flags = 0} = {}) => ({
+    get_scroll_direction: () => direction,
+    get_scroll_delta: () => [0, delta],
+    get_scroll_source: () => scrollSource,
+    get_flags: () => flags,
+});
+
+test('wheel scrolling animates and retains the native distance for rapid ticks', () => {
+    const {instance, adjustment} = scrollLauncher();
+    assert.equal(instance._onScroll(scrollEvent(1)), true);
+    assert.equal(adjustment.value, 300, 'the first tick must not jump');
+    assert.equal(adjustment.transition.duration, 190);
+    assert.equal(Math.round(adjustment.transition.target), 400);
+    adjustment.value = 330;
+    instance._onScroll(scrollEvent(1));
+    assert.equal(Math.round(adjustment.transition.target), 500, 'rapid ticks accumulate fully');
+    adjustment.finish();
+    assert.equal(instance._scrollTarget, null);
+});
+
+test('reversing the wheel responds from the current position', () => {
+    const {instance, adjustment} = scrollLauncher();
+    instance._onScroll(scrollEvent(1));
+    adjustment.value = 330;
+    instance._onScroll(scrollEvent(0));
+    assert.equal(Math.round(adjustment.transition.target), 230);
+    assert.ok(adjustment.transition.target < adjustment.value);
+});
+
+test('wheel targets clamp at both ends and do not animate at a boundary', () => {
+    const {instance, adjustment} = scrollLauncher(950);
+    instance._onScroll(scrollEvent(1));
+    assert.equal(adjustment.transition.target, 1000);
+    adjustment.finish();
+    instance._onScroll(scrollEvent(1));
+    assert.equal(adjustment.transition, null);
+    adjustment.value = 20;
+    instance._onScroll(scrollEvent(0));
+    assert.equal(adjustment.transition.target, 0);
+    adjustment.finish();
+    instance._onScroll(scrollEvent(0));
+    assert.equal(adjustment.transition, null);
+    adjustment.upper = 500;
+    instance._onScroll(scrollEvent(1));
+    assert.equal(adjustment.value, 0, 'a short result set has no scroll range');
+    assert.equal(adjustment.transition, null);
+});
+
+test('touchpad input cancels wheel easing and uses the native scrolling path', () => {
+    const {instance, adjustment} = scrollLauncher();
+    instance._onScroll(scrollEvent(1));
+    adjustment.value = 330;
+    assert.equal(instance._onScroll(scrollEvent(4, {source: 1, delta: 0.5})), false);
+    assert.equal(adjustment.transition, null);
+    assert.equal(instance._scrollTarget, null);
+    assert.equal(adjustment.value, 330, 'native scrolling still owns the gesture delta');
+});
+
+test('high-resolution mouse wheels animate fractional ticks and ignore emulated events', () => {
+    const {instance, adjustment} = scrollLauncher();
+    assert.equal(instance._onScroll(scrollEvent(4, {delta: 0.25})), true);
+    assert.equal(Math.round(adjustment.transition.target), 325);
+    const transition = adjustment.transition;
+    assert.equal(instance._onScroll(scrollEvent(1, {flags: 1})), false);
+    assert.equal(adjustment.transition, transition);
+});
+
+test('reduced motion updates immediately without leaving an animation', () => {
+    const {instance, adjustment} = scrollLauncher();
+    globalThis.launcherAnimationsEnabled = false;
+    try {
+        instance._onScroll(scrollEvent(1));
+        assert.equal(Math.round(adjustment.value), 400);
+        assert.equal(adjustment.transition, null);
+        assert.equal(instance._scrollTarget, null);
+    } finally {
+        delete globalThis.launcherAnimationsEnabled;
+    }
+});
+
+test('closing, touch panning and keyboard focus cannot inherit pending wheel motion', () => {
+    const {instance, adjustment} = scrollLauncher();
+    instance._onScroll(scrollEvent(1));
+    instance._onOpenStateChanged(false);
+    assert.equal(adjustment.transition, null);
+    assert.equal(instance._scrollTarget, null);
+    instance._onScroll(scrollEvent(1));
+    instance._onPanUpdate({get_delta: () => ({get_y: () => 25})});
+    assert.equal(adjustment.value, 275);
+    assert.equal(adjustment.transition, null);
+    instance._onScroll(scrollEvent(1));
+    instance._visibleButtons = [{get_allocation_box: () => ({y1: 1300, y2: 1400})}];
+    instance._selectedIndex = 0;
+    instance._ensureSelectionVisible();
+    assert.equal(adjustment.value, 400);
+    assert.equal(adjustment.transition, null);
+});
 
 test('a cancelled drag cannot close the popup later', () => {
     const instance = launcher();

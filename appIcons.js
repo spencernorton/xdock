@@ -174,6 +174,15 @@ export const DockAbstractAppIcon = GObject.registerClass({
         this._indicator = new AppIconIndicators.AppIconIndicator(this);
         this._urgentWindows = new Set();
 
+        // Texture resolution follows configuration, never the pointer. St.Icon
+        // handles theme, icon-content and monitor resource-scale changes itself.
+        for (const key of ['magnify-icons', 'magnify-max-scale', 'icon-size-fixed']) {
+            this._signalsHandler.add(Docking.DockManager.settings,
+                `changed::${key}`, () => this.icon.update());
+        }
+        this._signalsHandler.add(St.ThemeContext.get_for_stage(global.stage),
+            'notify::scale-factor', () => this.icon.update());
+
         // Monitor windows-changes instead of app state.
         // Keep using the same Id and function callback (that is extended)
         if (this._stateChangedId > 0) {
@@ -318,6 +327,21 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
         this._previewMenuManager = null;
         this._previewMenu = null;
+    }
+
+    _createIcon(size) {
+        const {settings} = Docking.DockManager;
+        const scale = settings.magnifyIcons && !settings.iconSizeFixed
+            ? settings.magnifyMaxScale : 1;
+        const actor = super._createIcon(Math.ceil(size * scale));
+        if (scale > 1) {
+            // The clone needs pixels for its peak size, but layout and picking
+            // still need the resting size. St applies resource scaling when it
+            // loads the texture; only the layout uses the theme's paint scale.
+            const {scaleFactor} = St.ThemeContext.get_for_stage(global.stage);
+            actor.set_size(size * scaleFactor, size * scaleFactor);
+        }
+        return actor;
     }
 
     // The inherited animateLaunch() is GNOME's OVERVIEW feedback: it clones the

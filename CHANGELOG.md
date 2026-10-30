@@ -6,6 +6,13 @@ All notable changes to XDock are documented here.
 
 - Fail native acceptance on unexpected compositor exit, including shutdown crashes.
 
+## 2.2.0 — 2026-10-30
+
+- Keep icons sharp as they magnify by preparing textures for their largest size.
+- Scroll the application launcher smoothly with the mouse wheel. Quick turns keep their full distance, and reversing responds immediately.
+- Keep touchpad movement direct and respect GNOME's Reduce Animation setting.
+- Stop pending scrolling when filtering results, using the scrollbar or keyboard, closing the launcher, or rebuilding its popup.
+
 ## 2.1.1 — 2026-10-29
 
 - Stop cancelled trash queries from falling through after dock teardown, ignore

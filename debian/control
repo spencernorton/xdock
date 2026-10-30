@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Norvi <apt@globalentry.systems>
 Build-Depends: debhelper-compat (= 13), gettext, libglib2.0-bin, sassc
 Standards-Version: 4.7.2
-Homepage: https://github.com/spencercnorton/xdock
+Homepage: https://github.com/spencernorton/xdock
 Rules-Requires-Root: no
 
 Package: gnome-shell-extension-xdock
