@@ -1,3 +1,11 @@
+gnome-shell-extension-xdock (2.2.0) resolute; urgency=medium
+
+  * Keep magnified dock icons sharp with full-resolution textures.
+  * Add smooth wheel scrolling to the application launcher popup.
+  * Retain native touchpad input and reduced-motion preferences.
+
+ -- Norvi <apt@globalentry.systems>  Fri, 30 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-xdock (2.1.1) resolute; urgency=medium
 
   * Keep cancelled trash queries and fallback enumerators safe at teardown.
@@ -13,7 +21,6 @@ gnome-shell-extension-xdock (2.1.0) resolute; urgency=medium
   * Require native popup, drag, magnification and idle acceptance in CI.
 
  -- Norvi <apt@globalentry.systems>  Thu, 29 Oct 2026 00:00:00 +0000
-
 gnome-shell-extension-xdock (2.1.0~mag1) resolute; urgency=medium
 
   * Add macOS-style icon magnification and let dock animations leave the dock.

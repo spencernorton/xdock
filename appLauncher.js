@@ -76,6 +76,7 @@ const DEFAULT_ICON_SIZE = 48;
 const HOVER_LABEL_SHOW_TIME = 150;
 const HOVER_LABEL_HIDE_TIME = 100;
 const HOVER_LABEL_GAP = 8;
+const SCROLL_ANIMATION_DURATION = 190;
 
 // Drag feel. EASE_OUT_BACK overshoots slightly, which is what reads as "spring".
 const DRAG_PICKUP_FROM_SCALE = 0.85;
@@ -294,6 +295,7 @@ export class AppGridLauncher {
         this._grid = null;
         this._gridFillers = [];
         this._scrollView = null;
+        this._scrollTarget = null;
         this._touchPanGesture = null;
         this._statusLabel = null;
         this._hoverLabel = null;
@@ -1612,6 +1614,14 @@ export class AppGridLauncher {
             // adjustment changes; the next hover/focus displays a fresh label.
             this._menuSignalsHandler.add(scrollView.vadjustment, 'notify::value',
                 () => this._hideHoverLabel({animate: false}));
+            this._menuSignalsHandler.add(scrollView, 'captured-event', (_actor, event) => {
+                if (event.type() === Clutter.EventType.SCROLL)
+                    return this._onScroll(event);
+                if (event.type() === Clutter.EventType.BUTTON_PRESS ||
+                    event.type() === Clutter.EventType.TOUCH_BEGIN)
+                    this._stopSmoothScroll();
+                return Clutter.EVENT_PROPAGATE;
+            });
 
             let touchPanGesture = null;
             if (scrollView.set_touch_scrolling instanceof Function) {
@@ -1855,6 +1865,7 @@ export class AppGridLauncher {
     }
 
     _destroyMenu() {
+        this._stopSmoothScroll();
         this._cancelDragClose();
         this._hoverLabelIcon = null;
         this._tryCleanup('pending layout callback', () => this._layoutTask?.cancel());
@@ -1928,6 +1939,7 @@ export class AppGridLauncher {
         if (isOpen)
             return;
 
+        this._stopSmoothScroll();
         this._hideHoverLabel({animate: false});
         this._cancelDragClose();
         if (this._restoreFocusOnClose && this._sourceButton?.mapped)
@@ -2028,7 +2040,55 @@ export class AppGridLauncher {
         }
     }
 
+    _stopSmoothScroll() {
+        this._scrollView?.vadjustment?.remove_transition('value');
+        this._scrollTarget = null;
+    }
+
+    _onScroll(event) {
+        const adjustment = this._scrollView?.vadjustment;
+        if (!adjustment || event.get_flags() & Clutter.EventFlags.FLAG_POINTER_EMULATED)
+            return Clutter.EVENT_PROPAGATE;
+
+        const direction = event.get_scroll_direction();
+        let delta;
+        if (direction === Clutter.ScrollDirection.UP) {
+            delta = -1;
+        } else if (direction === Clutter.ScrollDirection.DOWN) {
+            delta = 1;
+        } else if (direction === Clutter.ScrollDirection.SMOOTH &&
+            event.get_scroll_source() === Clutter.ScrollSource.WHEEL) {
+            [, delta] = event.get_scroll_delta();
+        } else {
+            // Touchpads already provide continuous movement. Stop a previous
+            // wheel animation before handing control back to the native view.
+            this._stopSmoothScroll();
+            return Clutter.EVENT_PROPAGATE;
+        }
+        if (!Number.isFinite(delta) || delta === 0)
+            return Clutter.EVENT_PROPAGATE;
+
+        const pending = this._scrollTarget ?? adjustment.value;
+        const start = delta * (pending - adjustment.value) < 0 ? adjustment.value : pending;
+        // Match St.Adjustment's native wheel distance; accumulate rapid ticks,
+        // but reverse immediately instead of first finishing queued movement.
+        const target = Math.max(adjustment.lower, Math.min(adjustment.upper - adjustment.page_size,
+            start + delta * Math.pow(adjustment.page_size, 2 / 3)));
+        if (target === adjustment.value) {
+            this._stopSmoothScroll();
+            return Clutter.EVENT_STOP;
+        }
+        this._scrollTarget = target;
+        adjustment.ease(target, {
+            duration: launcherAnimationDuration(SCROLL_ANIMATION_DURATION),
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+            onComplete: () => (this._scrollTarget = null),
+        });
+        return Clutter.EVENT_STOP;
+    }
+
     _onPanUpdate(gesture) {
+        this._stopSmoothScroll();
         const adjustment = this._scrollView?.vadjustment;
         const height = this._scrollView?.height ?? 0;
         if (!adjustment || height <= 0)
@@ -2422,6 +2482,7 @@ export class AppGridLauncher {
         if (!this._grid)
             return;
 
+        this._stopSmoothScroll();
         const previousButton = this._visibleButtons[this._selectedIndex];
         const previousId = previousButton?._app?.get_id();
         const restoreResultFocus = previousButton?.has_key_focus() ?? false;
@@ -2702,6 +2763,7 @@ export class AppGridLauncher {
     }
 
     _ensureSelectionVisible() {
+        this._stopSmoothScroll();
         const selected = this._visibleButtons[this._selectedIndex];
         const adjustment = this._scrollView?.vadjustment;
         if (!selected || !adjustment)

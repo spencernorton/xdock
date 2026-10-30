@@ -42,6 +42,7 @@ export async function run() {
     const dateMenuVisible = Main.panel.statusArea.dateMenu.visible;
     const saved = {
         fixed: settings.get_boolean('dock-fixed'),
+        fixedIcons: settings.get_boolean('icon-size-fixed'),
         position: settings.get_enum('dock-position'),
         magnify: settings.get_boolean('magnify-icons'),
         maxScale: settings.get_double('magnify-max-scale'),
@@ -56,6 +57,7 @@ export async function run() {
 
     try {
         settings.set_boolean('dock-fixed', true);
+        settings.set_boolean('icon-size-fixed', false);
         settings.set_enum('dock-position', St.Side.BOTTOM);
         settings.set_double('magnify-max-scale', 1.6);
         settings.set_double('magnify-range-factor', 2.5);
@@ -78,6 +80,39 @@ export async function run() {
         dash = manager.mainDock.dash;
         const icons = dash.getAppIcons();
         check(icons.length >= 6, 'magnification needs at least six dock icons');
+        const {scaleFactor} = St.ThemeContext.get_for_stage(global.stage);
+        const texture = icon => icon.icon.icon.get_first_child()?.get_content()?.get_texture();
+        const checkResolution = scale => {
+            // A successful drop can replace an icon; inspect the live actors.
+            for (const icon of dash.getAppIcons()) {
+                const actor = icon.icon.icon;
+                const requested = Math.ceil(icon.icon.iconSize * scale);
+                check(actor.icon_size === requested,
+                    `source icon must request ${requested}px, got ${actor.icon_size}`);
+                const pixels = Math.ceil(requested * actor.get_resource_scale());
+                check(texture(icon)?.get_width() >= pixels,
+                    'magnification must have a loaded texture for its peak size');
+                check(actor.width === icon.icon.iconSize * scaleFactor && actor.height === actor.width,
+                    'higher-resolution textures must preserve the resting allocation');
+            }
+        };
+        // Configuration changes refresh the source before hover; pointer motion
+        // must only transform the same cached texture, including after resizing.
+        for (const scale of [1.3, 2, 2.5, 1.6]) {
+            settings.set_double('magnify-max-scale', scale);
+            // eslint-disable-next-line no-await-in-loop -- wait for native icon loading
+            await wait(400);
+            checkResolution(scale);
+        }
+        settings.set_boolean('icon-size-fixed', true);
+        await wait(400);
+        checkResolution(1);
+        settings.set_boolean('icon-size-fixed', false);
+        await wait(400);
+        checkResolution(1.6);
+        const sourceActors = icons.map(icon => icon.icon.icon);
+        const sourceTextures = icons.map(texture);
+        result.textureResolution = 'pass';
         const restWidth = dash._box.get_transformed_size()[0];
         check(icons.every(icon => binScale(icon) === 1), 'icons must start at rest');
 
@@ -102,6 +137,9 @@ export async function run() {
         check(Math.abs(anchoredX - px) <= 12,
             `magnified icon must stay under the pointer: ${anchoredX} vs ${px}`);
         result.peak = binScale(icons[2]);
+        check(icons.every((icon, i) => icon.icon.icon === sourceActors[i] && texture(icon) === sourceTextures[i]),
+            'hover must reuse the prepared source actors and textures');
+        result.textureReuse = 'pass';
 
         // Dragging with magnification on: the drag must freeze it at rest
         // (Shell's placeholder maths assumes uniform widths) and still land.
@@ -150,6 +188,7 @@ export async function run() {
         // Switching magnification off hands the bin back to plain hover.
         settings.set_boolean('magnify-icons', false);
         await wait(300);
+        checkResolution(1);
         const [hx, hy] = center(icons[1]);
         move(hx, hy);
         await wait(500);
@@ -163,6 +202,7 @@ export async function run() {
         move(100, 100);
         global.settings.set_strv('favorite-apps', favorites);
         settings.set_boolean('dock-fixed', saved.fixed);
+        settings.set_boolean('icon-size-fixed', saved.fixedIcons);
         settings.set_enum('dock-position', saved.position);
         settings.set_boolean('magnify-icons', saved.magnify);
         settings.set_double('magnify-max-scale', saved.maxScale);
