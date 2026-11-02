@@ -24,7 +24,7 @@ else
 fi
 cp -r "$probe" "$installed/"
 cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
-    "$installed/"
+    "$(dirname "$0")/icon-refresh.js" "$installed/"
 # Real desktop entries let Shell's application system populate the launcher;
 # no application or data from the host session is used.
 mkdir -p "$XDG_DATA_HOME/applications"

@@ -5,6 +5,7 @@ All notable changes to XDock are documented here.
 ## Unreleased
 
 - Fail native acceptance on unexpected compositor exit, including shutdown crashes.
+- Test that a pinned app's dock icon redraws when its launcher's icon changes, while the app is running, without a logout.
 
 ## 2.2.0 — 2026-10-30
 
