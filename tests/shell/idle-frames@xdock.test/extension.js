@@ -16,6 +16,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {run as popupInteractions} from '../popup-interactions.js';
 import {run as magnifyInteractions} from '../magnify-interactions.js';
+import {run as iconRefresh} from '../icon-refresh.js';
 
 const XDOCK = 'xdock@spencercnorton.github.io';
 
@@ -156,6 +157,9 @@ export default class IdleFramesProbe extends Extension {
         notes.forEach(note => note.actor?.remove_effect(note));
         report('popup interactions', JSON.stringify(await popupInteractions()));
         report('magnify interactions', JSON.stringify(await magnifyInteractions()));
+        const refresh = await iconRefresh();
+        report('icon refresh', JSON.stringify(refresh));
+        failed ||= !refresh.refreshed;
         // Cancel genuine GIO trash/proxy work immediately after each enable,
         // including successful operations whose callbacks are already queued.
         for (let cycle = 0; cycle < 3; cycle++) {
