@@ -44,7 +44,7 @@ export async function run() {
     GLib.file_set_contents(script, WINDOW);
     GLib.mkdir_with_parents(dir, 0o755);
     const path = GLib.build_filenamev([dir, ID]);
-    const launcher = icon => `[Desktop Entry]\nType=Application\nName=Icon Refresh Test\n` +
+    const launcher = icon => '[Desktop Entry]\nType=Application\nName=Icon Refresh Test\n' +
         `Exec=gjs ${script}\nIcon=${icon}\nStartupWMClass=dev.xdock.IconRefreshTest\n`;
     let installed = false;
     let handler = appSystem.connect('installed-changed', () => (installed = true));
@@ -90,8 +90,12 @@ export async function run() {
             after = shownIcon(dash);
         }
         const running = app.state === Shell.AppState.RUNNING;
-        return {before, after, running,
-            refreshed: running && /media-playback-start/.test(after ?? '')};
+        return {
+            before,
+            after,
+            running,
+            refreshed: running && /media-playback-start/.test(after ?? ''),
+        };
     } finally {
         appSystem.lookup_app(ID)?.get_windows().forEach(w => w.delete(global.get_current_time()));
         global.settings.set_strv('favorite-apps', previous);
