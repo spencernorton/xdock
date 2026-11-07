@@ -14,7 +14,6 @@ import {
     Dash,
     DND,
     Main,
-    PointerWatcher,
 } from './dependencies/shell/ui.js';
 
 import {
@@ -31,6 +30,7 @@ import {
     Utils,
 } from './imports.js';
 
+import {animationsEnabled} from './animationSettings.js';
 import {IconAnimator} from './iconAnimator.js';
 
 // module "Dash" did not export DASH_ANIMATION_TIME in old versions
@@ -212,23 +212,27 @@ export const DockDash = GObject.registerClass({
         this._dragPlaceholder = null;
         this._dragPlaceholderPos = -1;
         this._animatingPlaceholdersCount = 0;
-        this._magnifyWatch = null;
+        this._magnifyVisible = false;
+        this._magnifyCursorTracker = null;
+        this._magnifyCursorId = 0;
         this._magnifyPointer = null;
         this._magnifyInfluence = 0;
         this._magnifyFreezes = new Set();
         this._magnifyRest = null;
-        this._magnifyLastTickMs = 0;
-        this._magnifyAnimId = 0;
-        this._magnifyStagePointer = null;
+        this._magnifyTimeline = null;
+        this._magnifyStageX = NaN;
+        this._magnifyStageY = NaN;
         this._showLabelTimeoutId = 0;
         this._resetHoverTimeoutId = 0;
         this._labelShowing = false;
 
+        const orientation = this._isHorizontal
+            ? Clutter.Orientation.HORIZONTAL : Clutter.Orientation.VERTICAL;
         this._dashContainer = new St.BoxLayout({
             name: 'xdockDashContainer',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            vertical: !this._isHorizontal,
+            orientation,
             y_expand: this._isHorizontal,
             x_expand: !this._isHorizontal,
         });
@@ -248,13 +252,13 @@ export const DockDash = GObject.registerClass({
             name: 'xdockBoxContainer',
             x_align: Clutter.ActorAlign.FILL,
             y_align: Clutter.ActorAlign.FILL,
-            vertical: !this._isHorizontal,
+            orientation,
         });
         this._boxContainer.add_style_class_name(Theming.PositionStyleClass[this._position]);
 
         const rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
         this._box = new St.BoxLayout({
-            vertical: !this._isHorizontal,
+            orientation,
             clip_to_allocation: false,
             ...!this._isHorizontal ? {layout_manager: new DockDashIconsVerticalLayout()} : {},
             x_align: rtl ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
@@ -361,15 +365,29 @@ export const DockDash = GObject.registerClass({
             () => this._syncMagnify());
         this._signalsHandler.add(Docking.DockManager.settings, 'changed::icon-size-fixed',
             () => this._syncMagnify());
+        this._signalsHandler.add(Docking.DockManager.settings, 'changed::magnify-max-scale',
+            () => this._resetMagnify());
+        this.connect('notify::mapped', () => this._syncMagnify());
         this.connect('menu-opened', () => {
             this._magnifyFreezes.add('menu');
             this._resetMagnify();
         });
         this.connect('menu-closed', () => this._magnifyFreezes.delete('menu'));
-        this._magnifyRestStale = false;
-        const staleRest = () => (this._magnifyRestStale = true);
-        this._box.connectObject('child-added', staleRest, 'child-removed', staleRest, this);
-        this._syncMagnify();
+        const resetMagnifyForIcon = (_box, child) => {
+            // Redisplay temporarily removes the separator even when every
+            // icon stays put. Only icon membership changes invalidate an
+            // active snapshot.
+            if (child.setMagnifyScale)
+                this._resetMagnify();
+        };
+        this._box.connectObject('child-added', resetMagnifyForIcon,
+            'child-removed', resetMagnifyForIcon,
+            'notify::allocation', () => {
+                // The animation changes allocations itself. Keep the resting
+                // geometry stable until the whole row has shrunk again.
+                if (this._magnifyInfluence === 0 && !this._magnifyTimeline?.is_playing())
+                    this._magnifyRest = null;
+            }, this);
     }
 
     vfunc_get_preferred_height(forWidth) {
@@ -400,9 +418,12 @@ export const DockDash = GObject.registerClass({
     }
 
     _onDestroy() {
-        this._magnifyWatch?.remove();
-        this._magnifyWatch = null;
-        this._stopMagnifyAnim();
+        this._magnifyVisible = false;
+        this._disconnectMagnifyCursor();
+        this._magnifyTimeline?.stop();
+        this._magnifyTimeline?.disconnectObject(this);
+        this._magnifyTimeline = null;
+        this._magnifyRest = null;
         this.iconAnimator.destroy();
 
         if (this._requiresVisibilityTimeout) {
@@ -547,97 +568,109 @@ export const DockDash = GObject.registerClass({
         return accepted;
     }
 
-    // Magnification runs off a PointerWatcher rather than motion events:
-    // the watcher is the one pointer source that keeps reporting while the
-    // pointer crosses reactive children, gaps and the part of a magnified
-    // icon that overflows the dock, without making anything newly reactive.
-    // It exists only while the feature is on, and a tick that finds the
-    // dock settled returns without touching layout, so an idle dock with
-    // magnification enabled still stops redrawing entirely.
-    // The show-apps button lives outside _box and does not magnify.
+    setMagnifyVisible(visible) {
+        this._magnifyVisible = visible;
+        this._syncMagnify();
+    }
+
+    invalidateMagnifyGeometry() {
+        this._resetMagnify();
+    }
+
     _syncMagnify() {
         const {settings} = Docking.DockManager;
         // A scrolling dock (fixed icon size) would fight its own scrollbar:
         // growing an item moves the content under the pointer.
-        const enabled = settings.magnifyIcons && !settings.iconSizeFixed;
-        if (enabled && !this._magnifyWatch) {
-            this._magnifyWatch = PointerWatcher.getPointerWatcher().addWatch(
-                16, (x, y) => this._magnifyOnPointer(x, y));
-        } else if (!enabled && this._magnifyWatch) {
-            this._magnifyWatch.remove();
-            this._magnifyWatch = null;
-            this._stopMagnifyAnim();
+        const enabled = this._magnifyVisible && this.mapped &&
+            settings.magnifyIcons && !settings.iconSizeFixed;
+        if (enabled && !this._magnifyCursorTracker) {
+            // Mutter reports core pointer motion here even over Wayland
+            // clients, which can consume it before Clutter actors see it.
+            // The enlarged clone stays non-reactive outside the dock.
+            const tracker = global.backend.get_cursor_tracker();
+            this._magnifyCursorId = tracker.connect('position-invalidated', () =>
+                this._magnifyOnPointer());
+            this._magnifyCursorTracker = tracker;
+        } else if (!enabled && this._magnifyCursorTracker) {
+            this._disconnectMagnifyCursor();
             this._resetMagnify();
         }
     }
 
+    _disconnectMagnifyCursor() {
+        if (!this._magnifyCursorTracker)
+            return;
+        this._magnifyCursorTracker.disconnect(this._magnifyCursorId);
+        this._magnifyCursorTracker = null;
+        this._magnifyCursorId = 0;
+    }
+
     _resetMagnify() {
+        const wasActive = this._magnifyInfluence > 0 || this._magnifyTimeline?.is_playing();
+        this._magnifyTimeline?.stop();
+        this._magnifyRest = null;
         this._magnifyInfluence = 0;
         this._magnifyPointer = null;
-        for (const child of this._box.get_children())
-            child.setMagnifyScale?.(1);
-    }
-
-    // PointerWatcher only calls back when the pointer moves, so it cannot
-    // drive the approach on its own: a pointer that stops mid-swell would
-    // freeze there. The watcher only records the target; a short-lived
-    // timer runs the easing until settled, then removes itself.
-    _magnifyOnPointer(x, y) {
-        this._magnifyStagePointer = [x, y];
-        if (this._magnifyInfluence === 0 && !this._magnifyAnimId)
-            this._magnifyRest = this._captureMagnifyRest();
-        this._startMagnifyAnim();
-    }
-
-    _startMagnifyAnim() {
-        if (this._magnifyAnimId)
-            return;
-        this._magnifyLastTickMs = 0;
-        this._magnifyAnimId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
-            if (this._magnifyStep())
-                return GLib.SOURCE_CONTINUE;
-            this._magnifyAnimId = 0;
-            return GLib.SOURCE_REMOVE;
-        });
-        GLib.Source.set_name_by_id(this._magnifyAnimId, '[xdock] magnify step');
-    }
-
-    _stopMagnifyAnim() {
-        if (this._magnifyAnimId)
-            GLib.source_remove(this._magnifyAnimId);
-        this._magnifyAnimId = 0;
-    }
-
-    // Returns whether another step is needed.
-    _magnifyStep() {
-        const nowMs = GLib.get_monotonic_time() / 1000;
-        const dtMs = Math.min(this._magnifyLastTickMs ? nowMs - this._magnifyLastTickMs : 16, 100);
-        this._magnifyLastTickMs = nowMs;
-        const {settings} = Docking.DockManager;
-        const duration = St.Settings.get().enable_animations ? settings.magnifyDuration : 0;
-
-        // At rest, keep re-reading the resting geometry: children, icon size
-        // and dock position can all change underneath us, and a snapshot
-        // taken now is exactly the geometry magnification must grow from.
-        // An item added or removed mid-magnification (favourites edited, an
-        // app starting) invalidates the snapshot: it would keep scaling
-        // destroyed items.
-        if (this._magnifyInfluence === 0 || this._magnifyRestStale) {
-            this._magnifyRest = this._captureMagnifyRest();
-            this._magnifyRestStale = false;
+        this._magnifyStageX = NaN;
+        this._magnifyStageY = NaN;
+        if (wasActive) {
+            for (const child of this._box.get_children())
+                child.setMagnifyScale?.(1);
         }
-        const rest = this._magnifyRest;
-        const [x, y] = this._magnifyStagePointer ?? [NaN, NaN];
-        if (!rest)
-            return false;
+    }
 
+    _magnifyOnPointer() {
+        if (this._magnifyFreezes.size)
+            return;
+        const [x, y] = global.get_pointer();
+        if (x === this._magnifyStageX && y === this._magnifyStageY)
+            return;
+
+        if (this._magnifyInfluence === 0 && !this._magnifyTimeline?.is_playing()) {
+            this._magnifyRest ??= this._captureMagnifyRest();
+            if (!this._magnifyRest || !this._isMagnifyHit(x, y, this._magnifyRest))
+                return;
+        }
+
+        this._magnifyStageX = x;
+        this._magnifyStageY = y;
+        if (!this._magnifyTimeline) {
+            this._magnifyTimeline = new Clutter.Timeline({
+                actor: this, duration: 1000, repeat_count: -1,
+            });
+            this._magnifyTimeline.connectObject('new-frame', timeline => {
+                // The first frame has a zero delta. A 1 ms step starts the
+                // approach and subsequent steps use the actual frame time.
+                const dtMs = Math.min(Math.max(1, timeline.get_delta()), 100);
+                if (!this._magnifyStep(dtMs))
+                    timeline.stop();
+            }, this);
+        }
+        this._magnifyTimeline.start();
+    }
+
+    _isMagnifyHit(x, y, rest) {
         const axis = this._isHorizontal ? x : y;
         const across = this._isHorizontal ? y : x;
-        const inside = this.mapped && !this._magnifyFreezes.size &&
-            axis >= rest.axisStart - rest.pitch / 2 &&
+        return axis >= rest.axisStart - rest.pitch / 2 &&
             axis <= rest.axisStart + rest.total + rest.pitch / 2 &&
             across >= rest.acrossStart - rest.acrossOverflow &&
             across <= rest.acrossStart + rest.acrossSize + rest.acrossOverflow;
+    }
+
+    // Runs once per compositor frame while approaching a new target. The
+    // timeline stops after settling, even with the pointer still on the dock.
+    _magnifyStep(dtMs) {
+        const rest = this._magnifyRest;
+        if (!rest)
+            return false;
+
+        const {settings} = Docking.DockManager;
+        const duration = animationsEnabled() ? settings.magnifyDuration : 0;
+        const x = this._magnifyStageX;
+        const y = this._magnifyStageY;
+        const axis = this._isHorizontal ? x : y;
+        const inside = this._isMagnifyHit(x, y, rest);
 
         this._magnifyInfluence = Motion.planMagnifyApproach(
             this._magnifyInfluence, inside ? 1 : 0, duration, dtMs);

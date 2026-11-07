@@ -37,6 +37,7 @@ import {
 } from './imports.js';
 
 import {Extension} from './dependencies/shell/extensions/extension.js';
+import {animationsEnabled} from './animationSettings.js';
 
 // Use __ () and N__() for the extension gettext domain, and reuse
 // the shell domain with the default _() and N_()
@@ -359,7 +360,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
         // Reduced motion gets no bounce at all rather than an instant one: a
         // bounce with no duration is not feedback, it is a no-op with extra
         // steps.
-        if (!St.Settings.get().enable_animations || !this._ensureFloat())
+        if (!animationsEnabled() || !this._ensureFloat())
             return;
 
         // The label sits just past the (possibly magnified) icon, right where
@@ -547,7 +548,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
             translation_y: lift * dy,
             // ease() applies Shell's slow-down factor itself; only the reduced
             // motion case zeroes the base duration (motion_ms.reduced).
-            duration: St.Settings.get().enable_animations ? ICON_MOTION_TIME : 0,
+            duration: animationsEnabled() ? ICON_MOTION_TIME : 0,
             mode: resting
                 ? Clutter.AnimationMode.EASE_IN_CUBIC
                 : Clutter.AnimationMode.EASE_OUT_CUBIC,

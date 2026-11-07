@@ -1,6 +1,6 @@
 {
 "shell-version": [
-    "50"
+    "50", "51"
 ],
 "uuid": "xdock@spencercnorton.github.io",
 "name": "XDock",

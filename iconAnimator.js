@@ -16,6 +16,7 @@ import {
 } from './motion.js';
 
 import {getPosition} from './utils.js';
+import {animationsEnabled, animationSettingSignals} from './animationSettings.js';
 
 // One attention cycle is a hop and then a rest; see planAttentionBounce().
 const CYCLE_TIME = 3000;
@@ -59,14 +60,16 @@ export class IconAnimator {
             this._setOffset(planAttentionBounce(
                 this._timeline.get_progress() * ATTENTION_BOUNCE_DUTY)));
         this._completedId = this._timeline.connect('completed', () => this._rest());
-        this._settingsChangedId = St.Settings.get().connect(
-            'notify::enable-animations', () => this._sync());
+        const settings = St.Settings.get();
+        this._settingsChangedIds = animationSettingSignals.map(signal =>
+            settings.connect(signal, () => this._sync()));
     }
 
     destroy() {
         this._started = false;
         this._sync();
-        St.Settings.get().disconnect(this._settingsChangedId);
+        const settings = St.Settings.get();
+        this._settingsChangedIds.forEach(id => settings.disconnect(id));
         this._timeline.disconnect(this._newFrameId);
         this._timeline.disconnect(this._completedId);
         delete this._timeline;
@@ -111,7 +114,7 @@ export class IconAnimator {
     // is due, stops both and puts the icons back.
     _sync() {
         if (!this._started || this._count === 0 ||
-            !St.Settings.get().enable_animations) {
+            !animationsEnabled()) {
             this._timeline.stop();
             if (this._restId)
                 GLib.source_remove(this._restId);

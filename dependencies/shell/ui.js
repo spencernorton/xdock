@@ -10,7 +10,6 @@ export * as Main from 'resource:///org/gnome/shell/ui/main.js';
 export * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 export * as Overview from 'resource:///org/gnome/shell/ui/overview.js';
 export * as OverviewControls from 'resource:///org/gnome/shell/ui/overviewControls.js';
-export * as PointerWatcher from 'resource:///org/gnome/shell/ui/pointerWatcher.js';
 export * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 export * as SearchController from 'resource:///org/gnome/shell/ui/searchController.js';
 export * as ShellMountOperation from 'resource:///org/gnome/shell/ui/shellMountOperation.js';

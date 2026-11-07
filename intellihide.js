@@ -46,11 +46,7 @@ const handledWindowTypes = [
 // List of applications, ignore windows of these applications in considering intellihide
 const ignoreApps = ['com.rastersoft.ding', 'com.desktop.ding'];
 
-/**
- * A rough and ugly implementation of the intellihide behaviour.
- * Intallihide object: emit 'status-changed' signal when the overlap of windows
- * with the provided targetBoxClutter.ActorBox changes;
- */
+// Reports changes in window overlap with the dock's target box.
 export class Intellihide {
     constructor(monitorIndex) {
         // Load settings
@@ -58,8 +54,6 @@ export class Intellihide {
 
         this._signalsHandler = new Utils.GlobalSignalsHandler();
         this._tracker = Shell.WindowTracker.get_default();
-        this._focusApp = null; // The application whose window is focused.
-        this._topApp = null; // The application whose window is on top on the monitor with the dock.
 
         this._isEnabled = false;
         this._status = OverlapStatus.UNDEFINED;
@@ -69,62 +63,53 @@ export class Intellihide {
         this._checkOverlapTimeoutId = 0;
 
         this._trackedWindows = new Map();
-
-        // Connect global signals
-        this._signalsHandler.add([
-            // Add signals on windows created from now on
-            global.display,
-            'window-created',
-            this._windowCreated.bind(this),
-        ], [
-            // triggered for instance when the window list order changes,
-            // included when the workspace is switched
-            global.display,
-            'restacked',
-            this._checkOverlap.bind(this),
-        ], [
-            // when windows are alwasy on top, the focus window can change
-            // without the windows being restacked. Thus monitor window focus change.
-            this._tracker,
-            'notify::focus-app',
-            this._checkOverlap.bind(this),
-        ], [
-            // update wne monitor changes, for instance in multimonitor when monitor are attached
-            Utils.getMonitorManager(),
-            'monitors-changed',
-            this._checkOverlap.bind(this),
-        ]);
     }
 
     destroy() {
-        // Disconnect global signals
-        this._signalsHandler.destroy();
-
-        // Remove  residual windows signals
         this.disable();
     }
 
     enable() {
+        if (this._isEnabled)
+            return;
+
         this._isEnabled = true;
         this._status = OverlapStatus.UNDEFINED;
-        global.get_window_actors().forEach(function (wa) {
+        this._signalsHandler.add([
+            global.display,
+            'window-created',
+            this._windowCreated.bind(this),
+        ], [
+            global.display,
+            'restacked',
+            this._checkOverlap.bind(this),
+        ], [
+            // Focus can change without restacking always-on-top windows.
+            this._tracker,
+            'notify::focus-app',
+            this._checkOverlap.bind(this),
+        ], [
+            Utils.getMonitorManager(),
+            'monitors-changed',
+            this._checkOverlap.bind(this),
+        ]);
+        for (const wa of global.get_window_actors())
             this._addWindowSignals(wa);
-        }, this);
         this._doCheckOverlap();
     }
 
     disable() {
         this._isEnabled = false;
+        this._signalsHandler.clear();
 
         for (const wa of this._trackedWindows.keys())
             this._removeWindowSignals(wa);
-
-        this._trackedWindows.clear();
 
         if (this._checkOverlapTimeoutId > 0) {
             GLib.source_remove(this._checkOverlapTimeoutId);
             this._checkOverlapTimeoutId = 0;
         }
+        this._checkOverlapTimeoutContinue = false;
     }
 
     _windowCreated(display, metaWindow) {
@@ -133,7 +118,7 @@ export class Intellihide {
     }
 
     _addWindowSignals(wa) {
-        if (!this._handledWindow(wa))
+        if (!wa || this._trackedWindows.has(wa) || !this._handledWindow(wa))
             return;
 
         this._trackedWindows.set(wa, [
@@ -174,19 +159,18 @@ export class Intellihide {
             return;
         }
 
-        this._doCheckOverlap();
-
         this._checkOverlapTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, INTELLIHIDE_CHECK_INTERVAL, () => {
-                this._doCheckOverlap();
                 if (this._checkOverlapTimeoutContinue) {
                     this._checkOverlapTimeoutContinue = false;
-                    return GLib.SOURCE_CONTINUE;
-                } else {
-                    this._checkOverlapTimeoutId = 0;
-                    return GLib.SOURCE_REMOVE;
+                    this._doCheckOverlap();
+                    return this._isEnabled ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
                 }
+                this._checkOverlapTimeoutId = 0;
+                return GLib.SOURCE_REMOVE;
             });
+        GLib.Source.set_name_by_id(this._checkOverlapTimeoutId, '[xdock] window overlap throttle');
+        this._doCheckOverlap();
     }
 
     _doCheckOverlap() {
@@ -194,7 +178,7 @@ export class Intellihide {
             return;
 
         let overlaps = OverlapStatus.FALSE;
-        let windows = global.get_window_actors().filter(wa => this._handledWindow(wa));
+        const windows = global.get_window_actors().filter(wa => this._handledWindow(wa));
 
         if (windows.length > 0) {
             /*
@@ -214,16 +198,14 @@ export class Intellihide {
             }
 
             if (topWindow) {
-                this._topApp = this._tracker.get_window_app(topWindow);
+                const topApp = this._tracker.get_window_app(topWindow);
                 // If there isn't a focused app, use that of the window on top
-                this._focusApp = this._tracker.focus_app || this._topApp;
+                const focusApp = this._tracker.focus_app || topApp;
 
-                windows = windows.filter(this._intellihideFilterInteresting, this);
+                for (const wa of windows) {
+                    const win = wa.get_meta_window();
 
-                for (let i = 0;  i < windows.length; i++) {
-                    const win = windows[i].get_meta_window();
-
-                    if (win) {
+                    if (win && this._intellihideFilterInteresting(win, focusApp, topApp)) {
                         const rect = win.get_frame_rect();
 
                         const test = (rect.x < this._targetBox.x2) &&
@@ -249,8 +231,7 @@ export class Intellihide {
     // Filter interesting windows to be considered for intellihide.
     // Consider all windows visible on the current workspace.
     // Optionally skip windows of other applications
-    _intellihideFilterInteresting(wa) {
-        const metaWin = wa.get_meta_window();
+    _intellihideFilterInteresting(metaWin, focusApp, topApp) {
         const currentWorkspace = global.workspace_manager.get_active_workspace_index();
         const workspace = metaWin.get_workspace();
         const workspaceIndex = workspace.index();
@@ -263,7 +244,7 @@ export class Intellihide {
 
         case IntellihideMode.FOCUS_APPLICATION_WINDOWS:
             // Skip windows of other apps
-            if (this._focusApp) {
+            if (focusApp) {
                 // The DropDownTerminal extension is not an application per se
                 // so we match its window by wm class instead
                 if (metaWin.get_wm_class() === 'DropDownTerminalWindow')
@@ -274,7 +255,7 @@ export class Intellihide {
 
                 // Consider half maximized windows side by side
                 // and windows which are alwayson top
-                if (currentApp !== this._focusApp && currentApp !== this._topApp &&
+                if (currentApp !== focusApp && currentApp !== topApp &&
                     !((focusWindow && focusWindow.maximized_vertically &&
                        !focusWindow.maximized_horizontally) &&
                      (metaWin.maximized_vertically && !metaWin.maximized_horizontally) &&
@@ -292,7 +273,7 @@ export class Intellihide {
 
         case IntellihideMode.ALWAYS_ON_TOP:
             // Always on top, except for fullscreen windows
-            if (this._focusApp) {
+            if (focusApp) {
                 const {focusWindow} = global.display;
                 if (!focusWindow?.fullscreen)
                     return false;

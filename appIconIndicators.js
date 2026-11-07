@@ -9,6 +9,7 @@ import {
 } from './dependencies/gi.js';
 
 import {Main} from './dependencies/shell/ui.js';
+import {animationsEnabled} from './animationSettings.js';
 
 import {
     Docking,
@@ -366,7 +367,7 @@ class RunningIndicatorDots extends RunningIndicatorBase {
             this._area.queue_repaint();
             this._area.ease({
                 opacity: 255,
-                duration: St.Settings.get().enable_animations
+                duration: animationsEnabled()
                     ? INDICATOR_FADE_TIME : 0,
                 mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
             });

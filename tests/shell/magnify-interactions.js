@@ -40,8 +40,10 @@ export async function run() {
         return [x + w / 2, y + h / 2];
     };
     const dateMenuVisible = Main.panel.statusArea.dateMenu.visible;
+    const forceAnimations = global.force_animations;
     const saved = {
         fixed: settings.get_boolean('dock-fixed'),
+        manualHide: settings.get_boolean('manualhide'),
         fixedIcons: settings.get_boolean('icon-size-fixed'),
         position: settings.get_enum('dock-position'),
         magnify: settings.get_boolean('magnify-icons'),
@@ -57,12 +59,14 @@ export async function run() {
 
     try {
         settings.set_boolean('dock-fixed', true);
+        settings.set_boolean('manualhide', false);
         settings.set_boolean('icon-size-fixed', false);
         settings.set_enum('dock-position', St.Side.BOTTOM);
         settings.set_double('magnify-max-scale', 1.6);
         settings.set_double('magnify-range-factor', 2.5);
         settings.set_int('magnify-duration', 125);
         settings.set_boolean('magnify-icons', true);
+        global.force_animations = true;
         global.settings.set_strv('favorite-apps', [
             'xdock-popup-test-00.desktop', 'xdock-popup-test-01.desktop',
             'xdock-popup-test-02.desktop', 'xdock-popup-test-03.desktop',
@@ -115,11 +119,16 @@ export async function run() {
         result.textureResolution = 'pass';
         const restWidth = dash._box.get_transformed_size()[0];
         check(icons.every(icon => binScale(icon) === 1), 'icons must start at rest');
+        move(160, 120);
+        await wait(100);
+        check(!dash._magnifyTimeline, 'off-dock motion must not start a frame timeline');
+        check(St.Settings.get().enable_animations, 'native test needs animations on');
 
         // Settle over the third icon: it must peak, its neighbours must
         // swell less, a far icon must not move, and the row must widen
         // around the pointer rather than slide away from it.
         const [px, py] = center(icons[2]);
+        const [, iconTop] = icons[2].get_transformed_position();
         move(px, py);
         await wait(800);
         check(binScale(icons[2]) > 1.45,
@@ -137,9 +146,23 @@ export async function run() {
         check(Math.abs(anchoredX - px) <= 12,
             `magnified icon must stay under the pointer: ${anchoredX} vs ${px}`);
         result.peak = binScale(icons[2]);
+        check(dash._magnifyTimeline && !dash._magnifyTimeline.is_playing(),
+            'the frame timeline must stop once the pointer has settled on the dock');
         check(icons.every((icon, i) => icon.icon.icon === sourceActors[i] && texture(icon) === sourceTextures[i]),
             'hover must reuse the prepared source actors and textures');
         result.textureReuse = 'pass';
+
+        // The painted clone extends past the icon's input surface. Moving
+        // onto the overflow should hold the magnification without moving
+        // the reactive icon or making the clone intercept pointer events.
+        move(px, iconTop - 8);
+        dash._queueRedisplay();
+        await wait(350);
+        check(binScale(icons[2]) > 1.45,
+            'painted overflow must keep the icon magnified during an unchanged redisplay');
+        move(px, py);
+        await wait(250);
+        result.overflow = 'pass';
 
         // Dragging with magnification on: the drag must freeze it at rest
         // (Shell's placeholder maths assumes uniform widths) and still land.
@@ -162,8 +185,7 @@ export async function run() {
             'the dragged favorite must survive the drop');
         result.dragWithMagnify = 'pass';
 
-        // Leaving settles everything back, and a settled dock stops drawing
-        // even though the pointer watcher is still registered.
+        // Leaving settles everything back, and a settled dock stops drawing.
         move(100, 100);
         await wait(800);
         check(icons.every(icon => binScale(icon) === 1),
@@ -185,9 +207,23 @@ export async function run() {
         check(frames === 0, 'a settled magnifying dock must stop redrawing');
         result.idleFrames = frames;
 
+        // A hidden dock must release the cursor even with magnification on.
+        settings.set_boolean('manualhide', true);
+        await wait(250);
+        move(px, py);
+        await wait(100);
+        check(!dash._magnifyCursorTracker && !dash._magnifyTimeline.is_playing(),
+            'a hidden dock must release the cursor and the frame clock');
+        move(100, 100);
+        settings.set_boolean('manualhide', false);
+        await wait(400);
+        check(!!dash._magnifyCursorTracker, 'revealing the dock must restore cursor tracking');
+        result.hiddenCursor = 'pass';
+
         // Switching magnification off hands the bin back to plain hover.
         settings.set_boolean('magnify-icons', false);
         await wait(300);
+        check(!dash._magnifyCursorTracker, 'disabling magnification must disconnect the cursor');
         checkResolution(1);
         const [hx, hy] = center(icons[1]);
         move(hx, hy);
@@ -202,12 +238,14 @@ export async function run() {
         move(100, 100);
         global.settings.set_strv('favorite-apps', favorites);
         settings.set_boolean('dock-fixed', saved.fixed);
+        settings.set_boolean('manualhide', saved.manualHide);
         settings.set_boolean('icon-size-fixed', saved.fixedIcons);
         settings.set_enum('dock-position', saved.position);
         settings.set_boolean('magnify-icons', saved.magnify);
         settings.set_double('magnify-max-scale', saved.maxScale);
         settings.set_double('magnify-range-factor', saved.range);
         settings.set_int('magnify-duration', saved.duration);
+        global.force_animations = forceAnimations;
         Main.panel.statusArea.dateMenu.visible = dateMenuVisible;
         // Restoring position queues a dock replacement. Exercise its deferred
         // layout before the observer declares success or terminates Shell.

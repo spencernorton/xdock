@@ -1,7 +1,7 @@
 # Check and build on every pull request and on main, on the supported Ubuntu
 # 26.04: ESLint, the Node and GJS tests, the schema and translation checks,
 # ShellCheck, and the zip and .deb built twice, compared byte for byte and
-# checked with Lintian; and, in a headless GNOME Shell 50, that a still screen
+# checked with Lintian; and, in headless GNOME Shell 50 and 51, that a still screen
 # paints nothing. No secrets, read-only token, GitHub-owned actions pinned by
 # commit.
 name: CI
@@ -69,8 +69,17 @@ jobs:
           path: dist/zip/
           if-no-files-found: error
           retention-days: 14
-  still-screen:
-    container: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+  shell-runtime:
+    name: GNOME Shell ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shell: '50'
+            image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+          - shell: '51'
+            image: ubuntu:26.10@sha256:262df65c0ec6bf8d9dcc87454f4330a05fae4b97825f45854af3b136666584c2
+    container: ${{ matrix.image }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -89,7 +98,10 @@ jobs:
           persist-credentials: false
       - name: Dock interactions, magnification and a still screen
         shell: bash
+        env:
+          SHELL_MAJOR: ${{ matrix.shell }}
         run: |
+          gnome-shell --version | grep -F "GNOME Shell ${SHELL_MAJOR}."
           make _build
           # A container has no logind. Without /run/systemd/seats GNOME Shell
           # uses its own stand-in, but it still wants a system bus.
@@ -101,7 +113,18 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: shell-runtime-evidence
+          name: shell-runtime-evidence-${{ matrix.shell }}
           path: shell-runtime.log
           if-no-files-found: warn
           retention-days: 14
+  still-screen:
+    # Preserve the required check name. Both supported versions must pass it.
+    needs: shell-runtime
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Require native tests on every supported Shell version
+        env:
+          NATIVE_TESTS: ${{ needs.shell-runtime.result }}
+        run: test "$NATIVE_TESTS" = success
