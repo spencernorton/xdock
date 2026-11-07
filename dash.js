@@ -220,6 +220,8 @@ export const DockDash = GObject.registerClass({
         this._magnifyFreezes = new Set();
         this._magnifyRest = null;
         this._magnifyTimeline = null;
+        this._magnifyRebasing = false;
+        this._magnifyLayoutId = 0;
         this._magnifyStageX = NaN;
         this._magnifyStageY = NaN;
         this._showLabelTimeoutId = 0;
@@ -373,15 +375,15 @@ export const DockDash = GObject.registerClass({
             this._resetMagnify();
         });
         this.connect('menu-closed', () => this._magnifyFreezes.delete('menu'));
-        const resetMagnifyForIcon = (_box, child) => {
+        const rebaseMagnifyForIcon = (_box, child) => {
             // Redisplay temporarily removes the separator even when every
             // icon stays put. Only icon membership changes invalidate an
             // active snapshot.
             if (child.setMagnifyScale)
-                this._resetMagnify();
+                this._rebaseMagnify();
         };
-        this._box.connectObject('child-added', resetMagnifyForIcon,
-            'child-removed', resetMagnifyForIcon,
+        this._box.connectObject('child-added', rebaseMagnifyForIcon,
+            'child-removed', rebaseMagnifyForIcon,
             'notify::allocation', () => {
                 // The animation changes allocations itself. Keep the resting
                 // geometry stable until the whole row has shrunk again.
@@ -420,6 +422,7 @@ export const DockDash = GObject.registerClass({
     _onDestroy() {
         this._magnifyVisible = false;
         this._disconnectMagnifyCursor();
+        this._cancelMagnifyLayout();
         this._magnifyTimeline?.stop();
         this._magnifyTimeline?.disconnectObject(this);
         this._magnifyTimeline = null;
@@ -574,7 +577,7 @@ export const DockDash = GObject.registerClass({
     }
 
     invalidateMagnifyGeometry() {
-        this._resetMagnify();
+        this._rebaseMagnify();
     }
 
     _syncMagnify() {
@@ -607,8 +610,10 @@ export const DockDash = GObject.registerClass({
 
     _resetMagnify() {
         const wasActive = this._magnifyInfluence > 0 || this._magnifyTimeline?.is_playing();
+        this._cancelMagnifyLayout();
         this._magnifyTimeline?.stop();
         this._magnifyRest = null;
+        this._magnifyRebasing = false;
         this._magnifyInfluence = 0;
         this._magnifyPointer = null;
         this._magnifyStageX = NaN;
@@ -619,8 +624,48 @@ export const DockDash = GObject.registerClass({
         }
     }
 
+    _rebaseMagnify() {
+        if (!this._magnifyCursorTracker || this._magnifyFreezes.size) {
+            this._magnifyRest = null;
+            return;
+        }
+
+        // Ease the live icons back before measuring the changed row. A
+        // snapshot taken while they are still enlarged would count growth
+        // as resting space and make the row jump on subsequent motion.
+        if (this._magnifyInfluence > 0) {
+            this._magnifyRebasing = true;
+            this._startMagnifyTimeline();
+        } else if (!this._magnifyLayoutId) {
+            this._resetMagnify();
+            this._resumeMagnifyAfterLayout();
+        }
+    }
+
+    _resumeMagnifyAfterLayout() {
+        // The box can keep the same allocation when a child changes. Wait
+        // for layout and sample the pointer even if it hasn't moved.
+        this._magnifyLayoutId = global.stage.connect('after-paint', () => {
+            if (!this._box.has_allocation() ||
+                this._box.get_children().some(child => child.visible && child.setMagnifyScale &&
+                    (!child.has_allocation() || child.animatingOut ||
+                     child.get_transition('scale-x') || child.get_transition('scale-y'))))
+                return;
+            this._cancelMagnifyLayout();
+            this._magnifyOnPointer();
+        });
+        this.queue_redraw();
+    }
+
+    _cancelMagnifyLayout() {
+        if (this._magnifyLayoutId) {
+            global.stage.disconnect(this._magnifyLayoutId);
+            this._magnifyLayoutId = 0;
+        }
+    }
+
     _magnifyOnPointer() {
-        if (this._magnifyFreezes.size)
+        if (this._magnifyFreezes.size || this._magnifyLayoutId)
             return;
         const [x, y] = global.get_pointer();
         if (x === this._magnifyStageX && y === this._magnifyStageY)
@@ -634,6 +679,10 @@ export const DockDash = GObject.registerClass({
 
         this._magnifyStageX = x;
         this._magnifyStageY = y;
+        this._startMagnifyTimeline();
+    }
+
+    _startMagnifyTimeline() {
         if (!this._magnifyTimeline) {
             this._magnifyTimeline = new Clutter.Timeline({
                 actor: this, duration: 1000, repeat_count: -1,
@@ -670,7 +719,8 @@ export const DockDash = GObject.registerClass({
         const x = this._magnifyStageX;
         const y = this._magnifyStageY;
         const axis = this._isHorizontal ? x : y;
-        const inside = this._isMagnifyHit(x, y, rest);
+        const rebasing = this._magnifyRebasing;
+        const inside = !rebasing && this._isMagnifyHit(x, y, rest);
 
         this._magnifyInfluence = Motion.planMagnifyApproach(
             this._magnifyInfluence, inside ? 1 : 0, duration, dtMs);
@@ -681,8 +731,9 @@ export const DockDash = GObject.registerClass({
                 : Motion.planMagnifyApproach(this._magnifyPointer, target, duration, dtMs);
         }
         if (this._magnifyInfluence === 0) {
-            // Settled: put every scale back (a no-op once at rest) and stop.
             this._resetMagnify();
+            if (rebasing)
+                this._resumeMagnifyAfterLayout();
             return false;
         }
 
@@ -696,7 +747,12 @@ export const DockDash = GObject.registerClass({
             maxTotal: rest.maxTotal,
             restTotal: rest.total,
         });
-        rest.items.forEach((item, i) => item.setMagnifyScale(scales[i]));
+        // Removed actors can still be in the snapshot during the fade.
+        const liveItems = rebasing ? new Set(this._box.get_children()) : null;
+        rest.items.forEach((item, i) => {
+            if (!liveItems || liveItems.has(item))
+                item.setMagnifyScale(scales[i]);
+        });
         return this._magnifyInfluence !== (inside ? 1 : 0) ||
             (inside && this._magnifyPointer !== axis - rest.axisStart);
     }
@@ -1230,6 +1286,9 @@ export const DockDash = GObject.registerClass({
                 addedItems[i].pos);
         }
 
+        // An exiting icon stays in the box until its removal animation ends.
+        if (removedActors.length)
+            this._rebaseMagnify();
         for (let i = 0; i < removedActors.length; i++) {
             const item = removedActors[i];
 
