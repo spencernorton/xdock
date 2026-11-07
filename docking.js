@@ -17,7 +17,6 @@ import {
     Layout,
     Main,
     OverviewControls,
-    PointerWatcher,
     PopupMenu,
     SwitcherPopup,
     Workspace,
@@ -46,6 +45,7 @@ import {
 } from './imports.js';
 
 import {Extension} from './dependencies/shell/extensions/extension.js';
+import {animationsEnabled} from './animationSettings.js';
 import {DockBlur} from './dockBlur.js';
 import {
     DeferredTask,
@@ -67,7 +67,6 @@ const {gettext: __} = Extension;
 
 const {signals: Signals} = imports;
 
-const DOCK_DWELL_CHECK_INTERVAL = 100;
 const STARTUP_ANIMATION_TIME = 500;
 const STARTUP_RESTORATION_RETRY_INTERVAL = 50;
 const STARTUP_RESTORATION_RETRY_ATTEMPTS = 5;
@@ -293,7 +292,8 @@ const XDock = GObject.registerClass({
         this._pressureBarrier = null;
         this._barrier = null;
         this._removeBarrierTimeoutId = 0;
-        this._dockWatch = null;
+        this._dockDwellTracker = null;
+        this._dockDwellSignalId = 0;
         this._dockDwellTimeoutId = 0;
         this._rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
 
@@ -334,7 +334,6 @@ const XDock = GObject.registerClass({
 
         // Initialize dwelling system variables
         this._dockDwelling = false;
-        this._dockWatch = null;
         this._dockDwellUserTime = 0;
         this._dockDwellTimeoutId = 0;
 
@@ -677,7 +676,7 @@ const XDock = GObject.registerClass({
                     GLib.source_remove(this._triggerTimeoutId);
                 delete this._triggerTimeoutId;
             }],
-            ['dock dwell', () => this._cancelDockDwell?.()],
+            ['dock dwell', () => this._stopDockDwell()],
             ['unredirect state', () => this._restoreUnredirect?.()],
             ['barrier timeout', () => {
                 if (this._removeBarrierTimeoutId > 0)
@@ -698,11 +697,6 @@ const XDock = GObject.registerClass({
                 this._pressureBarrier?.destroy();
                 this._pressureBarrier = null;
             }],
-            ['pointer watcher', () => {
-                if (this._dockWatch)
-                    PointerWatcher.getPointerWatcher()._removeWatch(this._dockWatch);
-                this._dockWatch = null;
-            }],
             ['workspace switch timeout', () => {
                 if (this._optionalScrollWorkspaceSwitchDeadTimeId)
                     GLib.source_remove(this._optionalScrollWorkspaceSwitchDeadTimeId);
@@ -715,11 +709,7 @@ const XDock = GObject.registerClass({
     }
 
     _updateAutoHideBarriers() {
-        // Remove pointer watcher
-        if (this._dockWatch) {
-            PointerWatcher.getPointerWatcher()._removeWatch(this._dockWatch);
-            this._dockWatch = null;
-        }
+        this._stopDockDwell();
 
         // Setup pressure barrier (GS38+ only)
         this._updatePressureBarrier();
@@ -814,14 +804,15 @@ const XDock = GObject.registerClass({
                 this._untrackDock();
                 this._trackDock();
 
-                this._updateAutoHideBarriers();
                 this._updateVisibilityMode();
+                this._updateAutoHideBarriers();
             },
         ], [
             settings,
             'changed::manualhide',
             () => {
                 this._updateVisibilityMode();
+                this._updateAutoHideBarriers();
             },
         ], [
             settings,
@@ -918,12 +909,13 @@ const XDock = GObject.registerClass({
         else
             this.remove_style_class_name('autohide');
 
-        if (this._intellihideIsEnabled) {
+        if (this._intellihideIsEnabled && !Main.overview.visibleTarget)
             this._intellihide.enable();
-        } else {
+        else
             this._intellihide.disable();
+
+        if (!this._intellihideIsEnabled)
             this._restoreUnredirect();
-        }
 
         this._updateDashVisibility();
     }
@@ -985,7 +977,8 @@ const XDock = GObject.registerClass({
     }
 
     _onOverviewHiding() {
-        this._intellihide.enable();
+        if (this._intellihideIsEnabled)
+            this._intellihide.enable();
         this._updateDashVisibility();
     }
 
@@ -1057,13 +1050,13 @@ const XDock = GObject.registerClass({
         // ease_property() applies Shell's policy to the base duration. The
         // standalone delay timer must apply that policy itself, including the
         // slow-down factor and the disabled-animations zero-delay behavior.
-        const animationsEnabled = AnimationUtils.adjustAnimationTime(fullDuration) > 0;
+        const animate = animationsEnabled() && AnimationUtils.adjustAnimationTime(fullDuration) > 0;
         const adjustedDelay = AnimationUtils.adjustAnimationTime(delayMs);
 
         this._motionController.request({
             targetProgress,
             fullDuration,
-            animationsEnabled,
+            animationsEnabled: animate,
             delay: adjustedDelay,
         });
     }
@@ -1073,11 +1066,14 @@ const XDock = GObject.registerClass({
             if (this._intellihideIsEnabled)
                 this._disableUnredirect();
             this.dash.iconAnimator.start();
+        } else {
+            this.dash.setMagnifyVisible(false);
         }
     }
 
     _completeDockTransition(plan) {
         if (plan.targetProgress === Motion.DockMotionTarget.SHOWN) {
+            this.dash.setMagnifyVisible(true);
             // Remove barrier so that the mouse pointer is released and can
             // reach monitors on the other side of the dock. The short delay
             // gives users an opportunity to move from the edge onto the dock.
@@ -1106,31 +1102,39 @@ const XDock = GObject.registerClass({
         if (this._autohideIsEnabled &&
             (!Utils.supportsExtendedBarriers() ||
              !DockManager.settings.requirePressureToShow)) {
-            const pointerWatcher = PointerWatcher.getPointerWatcher();
-            this._dockWatch = pointerWatcher.addWatch(
-                DOCK_DWELL_CHECK_INTERVAL, this._checkDockDwell.bind(this));
-            this._dockDwelling = false;
-            this._dockDwellUserTime = 0;
+            this._dockDwellTracker = global.backend.get_cursor_tracker();
+            this._dockDwellSignalId = this._dockDwellTracker.connect('position-invalidated', () => {
+                const [x, y] = global.get_pointer();
+                this._checkDockDwell(x, y);
+            });
         }
     }
 
+    _stopDockDwell() {
+        this._cancelDockDwell();
+        if (this._dockDwellSignalId)
+            this._dockDwellTracker.disconnect(this._dockDwellSignalId);
+        this._dockDwellSignalId = 0;
+        this._dockDwellTracker = null;
+        this._dockDwelling = false;
+        this._dockDwellUserTime = 0;
+    }
+
     _checkDockDwell(x, y) {
-        const workArea = Main.layoutManager.getWorkAreaForMonitor(this._monitor.index);
-        let shouldDwell;
-        // Check for the correct screen edge, extending the sensitive area to the whole workarea,
-        // minus 1 px to avoid conflicting with other active corners.
-        if (this._position === St.Side.LEFT) {
-            shouldDwell = (x === this._monitor.x) && (y > workArea.y) &&
-                (y < workArea.y + workArea.height);
-        } else if (this._position === St.Side.RIGHT) {
-            shouldDwell = (x === this._monitor.x + this._monitor.width - 1) &&
-                (y > workArea.y) && (y < workArea.y + workArea.height);
-        } else if (this._position === St.Side.TOP) {
-            shouldDwell = (y === this._monitor.y) && (x > workArea.x) &&
-                (x < workArea.x + workArea.width);
-        } else if (this._position === St.Side.BOTTOM) {
-            shouldDwell = (y === this._monitor.y + this._monitor.height - 1) &&
-                (x > workArea.x) && (x < workArea.x + workArea.width);
+        const monitor = this._monitor;
+        const axis = this._isHorizontal ? y : x;
+        const start = this._isHorizontal ? monitor.y : monitor.x;
+        const length = this._isHorizontal ? monitor.height : monitor.width;
+        const trailing = this._position === St.Side.RIGHT || this._position === St.Side.BOTTOM;
+        let shouldDwell = false;
+        if (axis === (trailing ? start + length - 1 : start)) {
+            // Only query the work area at the relevant edge. Leave the active
+            // corners free and ignore edges belonging to other monitors.
+            const workArea = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
+            const cross = this._isHorizontal ? x : y;
+            const crossStart = this._isHorizontal ? workArea.x : workArea.y;
+            const crossLength = this._isHorizontal ? workArea.width : workArea.height;
+            shouldDwell = cross > crossStart && cross < crossStart + crossLength;
         }
 
         if (shouldDwell) {
@@ -1373,6 +1377,7 @@ const XDock = GObject.registerClass({
     }
 
     _resetPosition() {
+        this.dash.invalidateMagnifyGeometry();
         // Ensure variables linked to settings are updated.
         this._updateVisibilityMode();
 

@@ -7,6 +7,7 @@
 /* eslint-disable no-await-in-loop -- one step at a time, by design */
 
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
@@ -14,6 +15,7 @@ import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {run as dwellInteractions} from '../dwell-interactions.js';
 import {run as popupInteractions} from '../popup-interactions.js';
 import {run as magnifyInteractions} from '../magnify-interactions.js';
 import {run as iconRefresh} from '../icon-refresh.js';
@@ -152,6 +154,24 @@ export default class IdleFramesProbe extends Extension {
             report('animations forced on', 'not possible (FAIL)');
             failed = true;
         }
+        if (St.ReducedMotion) {
+            const accessibility = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'});
+            const previous = accessibility.get_string('reduced-motion');
+            const icon = (await dash()).getAppIcons()[0];
+            try {
+                accessibility.set_string('reduced-motion', 'reduce');
+                await wait(500);
+                if (St.Settings.get().reducedMotion !== St.ReducedMotion.REDUCE)
+                    throw new Error('Shell did not receive the reduced-motion preference');
+                icon.urgent = true;
+                await wait(800);
+                const still = await frames(3000);
+                expect('reduced motion, an urgent icon, 3 s', still, still.count === 0);
+            } finally {
+                icon.urgent = false;
+                accessibility.set_string('reduced-motion', previous);
+            }
+        }
         global.force_animations = false;
 
         notes.forEach(note => note.actor?.remove_effect(note));
@@ -160,6 +180,7 @@ export default class IdleFramesProbe extends Extension {
         const refresh = await iconRefresh();
         report('icon refresh', JSON.stringify(refresh));
         failed ||= !refresh.refreshed;
+        report('dwell interactions', await dwellInteractions());
         // Cancel genuine GIO trash/proxy work immediately after each enable,
         // including successful operations whose callbacks are already queued.
         for (let cycle = 0; cycle < 3; cycle++) {

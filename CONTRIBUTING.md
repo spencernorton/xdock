@@ -17,7 +17,7 @@ personal address private. Public history is public data.
 ```bash
 make verify REQUIRE_GJS=1           # what CI runs: ESLint, Node and GJS tests, schemas, translations
 make _build && tests/shell/idle-frames.sh _build
-                                    # also in CI: native popup/dock interaction and still-screen checks in GNOME Shell 50
+                                    # also in CI: native interaction and still-screen checks on GNOME Shell 50 and 51
 make install                        # install the checkout into your own extensions directory
 scripts/build.sh                    # build the release zip and .deb
 ```
@@ -30,6 +30,8 @@ scripts/build.sh                    # build the release zip and .deb
   Hardware rendering and optional blur-provider integration still need their
   own qualification. Every GNOME
   Shell major version is checked before it is added to `metadata.json`.
+  See [Performance and Shell compatibility](docs/performance.md) for how to
+  compare changes and qualify a new Shell release.
 - Keep a change to one concern.
 - A fix that belongs in Dash to Dock is best sent there first, at
   [micheleg/dash-to-dock](https://github.com/micheleg/dash-to-dock); XDock

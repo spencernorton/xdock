@@ -12,7 +12,7 @@ Architecture: all
 Depends:
  ${misc:Depends},
  gnome-shell (>= 50~),
- gnome-shell (<< 51~)
+ gnome-shell (<< 52~)
 Recommends: gnome-rounded-blur
 Description: GNOME Shell extension: the NorviOS dock and app launcher
  A dock for GNOME Shell, based on Dash to Dock: pinned and running apps at

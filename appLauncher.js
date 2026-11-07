@@ -47,6 +47,7 @@ import {
 
 import {DeferredTask} from './lifecycle.js';
 import {WholeSurfaceRedraw} from './dockBlur.js';
+import {animationsEnabled} from './animationSettings.js';
 
 import * as PopupMenuUtils from './popupMenuUtils.js';
 
@@ -61,6 +62,7 @@ import {Extension} from './dependencies/shell/extensions/extension.js';
 const {gettext: __} = Extension;
 
 const MAX_CACHED_BUTTONS = MAX_VISIBLE_RESULTS * 2;
+const CLOSED_CACHE_DELAY = 3000;
 
 // The All Apps row's id. A Symbol rather than a string on purpose: drawer ids
 // are folder names in app-folders, and every path that touches one --
@@ -92,7 +94,7 @@ const DRAWER_REORDER_MODIFIERS = Clutter.ModifierType.CONTROL_MASK |
 // base duration here for reduced motion; calling adjustAnimationTime() first
 // would apply the slow-down factor twice when ease() sets its easing duration.
 function launcherAnimationDuration(duration) {
-    return St.Settings.get().enable_animations ? duration : 0;
+    return animationsEnabled() ? duration : 0;
 }
 
 /**
@@ -346,6 +348,12 @@ export class AppGridLauncher {
         this._layoutTask = new DeferredTask(
             callback => Utils.laterAdd(Meta.LaterType.BEFORE_REDRAW, callback),
             id => Utils.laterRemove(id));
+        this._cacheReleaseTask = new DeferredTask(
+            callback => GLib.timeout_add(GLib.PRIORITY_LOW, CLOSED_CACHE_DELAY, () => {
+                callback();
+                return GLib.SOURCE_REMOVE;
+            }),
+            id => GLib.source_remove(id));
 
         this._appSystem = null;
         this._appFavorites = null;
@@ -440,6 +448,7 @@ export class AppGridLauncher {
             return false;
 
         try {
+            this._cacheReleaseTask.cancel();
             // The source actor and arrow side are fixed at construction time. A
             // different monitor's button therefore needs a new anchored menu.
             const arrowSide = Utils.getPosition();
@@ -529,6 +538,7 @@ export class AppGridLauncher {
             return;
         }
 
+        this._scheduleClosedCacheRelease();
         const pending = this._closeRequestedWhileIconMenuOpen;
         this._closeRequestedWhileIconMenuOpen = null;
         if (pending) {
@@ -688,50 +698,71 @@ export class AppGridLauncher {
         this._clearDropHighlights();
         this._flushDeferredDrawers();
         this._flushDeferredCatalog();
+        this._scheduleClosedCacheRelease();
     }
 
     get iconSize() {
         return this._iconSize;
     }
 
-    /**
-     * Rebuild the drawer sidebar from the app-folders store.
-     *
-     * @param {boolean} preserveSelection keep the active drawer if it survives
-     */
-    _renderDrawers(preserveSelection = true) {
-        if (!this._drawerList)
+    _renderDrawers() {
+        const list = this._drawerList;
+        if (!list)
             return;
 
-        // The rows about to be destroyed are what the drawer menu is anchored
-        // to and what focus is owed to; neither reference survives this.
         this._closeDrawerMenu();
-        this._drawerCreationOrigin = null;
-        this._dropHighlightRow = null;
-        // A reorder IS a folder change, so the settings watch rebuilds the
-        // sidebar while the drag is still finishing. The dragged row is one of
-        // the actors about to be destroyed.
-        this._draggingRow = null;
-        this._drawerList.destroy_all_children();
-        this._drawerRows = new Map();
-
-        const drawers = this._drawers.list();
-        // All Apps is not in the folder list, so it must be exempted here or
-        // selecting it and then creating a drawer would bounce the view back
-        // to quick access.
-        if (preserveSelection && this._activeDrawerId &&
-            this._activeDrawerId !== ALL_APPS &&
-            !drawers.some(drawer => drawer.id === this._activeDrawerId))
-            this._activeDrawerId = null;
-        else if (!preserveSelection)
+        const labels = new Map(this._drawers.list().map(({id, name}) => [id, name]));
+        labels.set(ALL_APPS, __('All Apps'));
+        if (!labels.has(this._activeDrawerId))
             this._activeDrawerId = null;
 
-        for (const drawer of drawers)
-            this._drawerList.add_child(this._createDrawerRow(drawer.id, drawer.name));
-        // Last, under the drawers: All Apps is the fallback you reach for, not
-        // the starting point. The starting point is now the quick-access view,
-        // which is what an _activeDrawerId of null selects.
-        this._drawerList.add_child(this._createDrawerRow(ALL_APPS, __('All Apps')));
+        for (const [id, row] of this._drawerRows) {
+            if (labels.has(id))
+                continue;
+
+            const menu = this._drawerMenu;
+            if (menu?.sourceActor === row) {
+                // The hidden BoxPointer can still be in Clutter's pending
+                // layout. Keep the shared menu and release the deleted row.
+                menu.removeAll();
+                menu.sourceActor = null;
+                menu.focusActor = null;
+                menu.actor.setPosition(null, 0.5);
+            }
+            if (this._drawerCreationOrigin === row)
+                this._drawerCreationOrigin = null;
+            if (this._dropHighlightRow === row)
+                this._setDropHighlight(null);
+            if (row.has_key_focus())
+                this._entry?.grab_key_focus();
+            this._drawerRows.delete(id);
+            row.destroy();
+        }
+
+        // Keep surviving rows attached so a reorder preserves keyboard focus
+        // and the draggable. The first unplaced child is the insertion point.
+        let next = list.get_first_child();
+        for (const [id, label] of labels) {
+            const row = this._drawerRows.get(id);
+            if (!row) {
+                const newRow = this._createDrawerRow(id, label);
+                this._drawerRows.set(id, newRow);
+                if (next)
+                    list.insert_child_below(newRow, next);
+                else
+                    list.add_child(newRow);
+                continue;
+            }
+
+            if (row.label !== label) {
+                row.label = label;
+                row.accessible_name = label;
+            }
+            if (row === next)
+                next = row.get_next_sibling();
+            else
+                list.set_child_below_sibling(row, next);
+        }
 
         this._updateDrawerSelection();
     }
@@ -748,7 +779,8 @@ export class AppGridLauncher {
         row._drawerId = id;
         // Secondary click is how a drawer is created now, so the row has to be
         // told to report button three at all -- St.Button masks it by default.
-        row.set_button_mask(St.ButtonMask.ONE | St.ButtonMask.THREE);
+        row.set_button_mask((St.ButtonMask.PRIMARY ?? St.ButtonMask.ONE) |
+            (St.ButtonMask.SECONDARY ?? St.ButtonMask.THREE));
         row.connect('key-press-event', (actor, event) =>
             this._onDrawerRowKeyPress(row, event));
         row.connect('clicked', (actor, button) => {
@@ -757,8 +789,6 @@ export class AppGridLauncher {
             else
                 this._selectDrawer(id);
         });
-        this._drawerRows.set(id, row);
-
         // Only real drawers can be picked up and reordered. All Apps is a view
         // pinned to the bottom, so it stays put.
         if (typeof id === 'string' && id)
@@ -807,11 +837,6 @@ export class AppGridLauncher {
     /**
      * Let a drawer row be picked up and dropped on another to reorder it.
      *
-     * The draggable is created lazily on first press rather than at row
-     * construction: _renderDrawers() destroys and rebuilds every row on any
-     * folder change, and a reorder IS a folder change, so building a draggable
-     * per row per rebuild would churn one for every row on every drop.
-     *
      * @param {St.Button} row the drawer row
      */
     _makeDrawerRowDraggable(row) {
@@ -827,8 +852,7 @@ export class AppGridLauncher {
         });
         const end = () => {
             // Order matters: drop the in-flight reference and un-dim the row
-            // while it is still alive, THEN let the deferred rebuild run. The
-            // rebuild is what destroys this row.
+            // before the deferred refresh can move or destroy the row.
             this._draggingRow = null;
             row.remove_style_class_name('dragging-source');
             this._clearDropHighlights();
@@ -1143,12 +1167,9 @@ export class AppGridLauncher {
      * which read as one more drawer rather than as an action. It also carries
      * Delete for every row that is a real drawer.
      *
-     * One menu is re-anchored per row rather than one menu per drawer.
-     * Verified on GNOME 50: PopupMenu does NOT connect to its source actor's
-     * destroy, so a per-row menu would outlive the row and leak into uiGroup
-     * every time the sidebar rebuilt. Re-anchoring leaves a dangling
-     * sourceActor between a rebuild and the next open, which is safe only
-     * because _renderDrawers() closes the menu before destroying the rows.
+     * One menu is re-anchored per row. The rows handle their own keyboard
+     * navigation, so the menu must not install a permanent toggle handler on
+     * the first row that opened it.
      *
      * @param {St.Button} row the drawer row the menu belongs to
      */
@@ -1167,7 +1188,7 @@ export class AppGridLauncher {
             // its siblings, so sharing one would close the launcher underneath
             // this menu. Same two-manager model the result icons already use.
             this._drawerMenuManager = new PopupMenu.PopupMenuManager(this._sidebar);
-            this._drawerMenu = new PopupMenu.PopupMenu(row, 0.5, Utils.getPosition());
+            this._drawerMenu = new PopupMenu.PopupMenu(null, 0.5, Utils.getPosition());
             this._drawerMenu.actor.add_style_class_name(
                 'xdock-app-grid-launcher-drawer-menu');
             // MUST NOT return a value. PopupMenu uses the GJS Signals mixin,
@@ -1190,8 +1211,7 @@ export class AppGridLauncher {
 
         // Rebuilt on every open, not once: Delete names the drawer it acts on,
         // "All Apps" has no drawer to delete, and an item built once would keep
-        // acting on whichever row the menu happened to be created for -- a row
-        // the next folder change destroys.
+        // acting on whichever row last opened the menu.
         this._drawerMenu.removeAll();
         const create = new PopupMenu.PopupMenuItem(__('New Drawer…'));
         create.connect('activate', () => this._beginDrawerCreation(row));
@@ -1214,8 +1234,9 @@ export class AppGridLauncher {
         }
 
         // PopupMenu.open() re-runs BoxPointer.setPosition(this.sourceActor),
-        // so re-anchoring is just this assignment.
+        // so update the anchor and focus return target together.
         this._drawerMenu.sourceActor = row;
+        this._drawerMenu.focusActor = row;
         this._drawerCreationOrigin = row;
         PopupMenuUtils.open(this._drawerMenu);
     }
@@ -1368,7 +1389,7 @@ export class AppGridLauncher {
 
         this._endDrawerCreation();
         // The store writes folder-children, and the watch on that key performs
-        // the one sidebar rebuild. Committing used to render the sidebar three
+        // the sidebar update. Committing used to render the sidebar three
         // times over (cancel, explicit, settings signal) and the grid twice,
         // which is what made creating a drawer stutter.
         //
@@ -1646,7 +1667,7 @@ export class AppGridLauncher {
                 style_class: 'xdock-app-grid-launcher-box',
                 accessible_name: __('Application launcher'),
                 accessible_role: Atk.Role.PANEL,
-                vertical: true,
+                orientation: Clutter.Orientation.VERTICAL,
             });
             box.add_child(entry);
             box.add_child(scrollView);
@@ -1659,16 +1680,15 @@ export class AppGridLauncher {
                 style_class: 'xdock-app-grid-launcher-sidebar',
                 accessible_name: __('Drawers'),
                 accessible_role: Atk.Role.LIST,
-                vertical: true,
+                orientation: Clutter.Orientation.VERTICAL,
             });
             sidebar.set_style(`width: ${SIDEBAR_WIDTH}px;`);
 
-            // Only the drawer rows are rebuilt when the folder list changes.
-            // The name entry below lives outside that subtree so creating a
-            // drawer never destroys the control being used to create it.
+            // The folder list is kept in order independently of the name
+            // entry, which stays at the end of the sidebar.
             drawerList = new St.BoxLayout({
                 style_class: 'xdock-app-grid-launcher-drawer-list',
-                vertical: true,
+                orientation: Clutter.Orientation.VERTICAL,
             });
 
             // Shown at the foot of the sidebar while a name is being typed,
@@ -1702,7 +1722,7 @@ export class AppGridLauncher {
 
             const content = new St.BoxLayout({
                 style_class: 'xdock-app-grid-launcher-content',
-                vertical: false,
+                orientation: Clutter.Orientation.HORIZONTAL,
             });
             content.add_child(sidebar);
             content.add_child(box);
@@ -1715,7 +1735,7 @@ export class AppGridLauncher {
             const header = new St.BoxLayout({
                 style_class: 'xdock-app-grid-launcher-header',
                 accessible_role: Atk.Role.PANEL,
-                vertical: false,
+                orientation: Clutter.Orientation.HORIZONTAL,
             });
             // Contained: the header is decoration, and decoration must never be
             // able to stop the launcher opening. A throw here would otherwise
@@ -1738,7 +1758,7 @@ export class AppGridLauncher {
             footer = new St.BoxLayout({
                 style_class: 'xdock-app-grid-launcher-footer',
                 accessible_role: Atk.Role.PANEL,
-                vertical: false,
+                orientation: Clutter.Orientation.HORIZONTAL,
             });
             // Adwaita's standard gear rather than org.gnome.Settings-symbolic,
             // which only exists in Yaru: both render a gear here, but the
@@ -1768,7 +1788,7 @@ export class AppGridLauncher {
 
             const root = new St.BoxLayout({
                 style_class: 'xdock-app-grid-launcher-root',
-                vertical: true,
+                orientation: Clutter.Orientation.VERTICAL,
             });
             root.add_child(header);
             root.add_child(content);
@@ -1848,6 +1868,10 @@ export class AppGridLauncher {
                 'open-state-changed',
                 (openedMenu, isOpen) => this._onOpenStateChanged(isOpen),
             ], [
+                menu,
+                'menu-closed',
+                () => this._scheduleClosedCacheRelease(),
+            ], [
                 sourceButton,
                 'destroy',
                 () => this._destroyMenu(),
@@ -1869,6 +1893,7 @@ export class AppGridLauncher {
         this._cancelDragClose();
         this._hoverLabelIcon = null;
         this._tryCleanup('pending layout callback', () => this._layoutTask?.cancel());
+        this._tryCleanup('pending cache release', () => this._cacheReleaseTask?.cancel());
         const menu = this._menu;
         const menuManager = this._menuManager;
         const hoverLabel = this._hoverLabel;
@@ -1936,8 +1961,10 @@ export class AppGridLauncher {
     }
 
     _onOpenStateChanged(isOpen) {
-        if (isOpen)
+        if (isOpen) {
+            this._cacheReleaseTask.cancel();
             return;
+        }
 
         this._stopSmoothScroll();
         this._hideHoverLabel({animate: false});
@@ -1945,6 +1972,26 @@ export class AppGridLauncher {
         if (this._restoreFocusOnClose && this._sourceButton?.mapped)
             this._sourceButton.grab_key_focus();
         this._restoreFocusOnClose = false;
+    }
+
+    _scheduleClosedCacheRelease() {
+        // BoxPointer keeps the menu visible during its close animation. The
+        // result actors can also outlive the popup as drag or menu anchors.
+        if (this._destroyed || !this._menu || this._menu.actor.visible ||
+            !this._buttonsById.size || this._draggingIcon || this._iconMenuOpen)
+            return;
+
+        // Keep a quick reopen warm, then release visible and spare buttons.
+        this._cacheReleaseTask.schedule(() => {
+            if (this.isOpen || this._draggingIcon || this._iconMenuOpen)
+                return;
+
+            this._clearButtonPool();
+            this._gridFillers.forEach(filler => filler.destroy());
+            this._gridFillers = [];
+            this._selectedIndex = -1;
+            this._styledSelectionIndex = -1;
+        });
     }
 
     _onLayoutChanged() {
@@ -2239,7 +2286,7 @@ export class AppGridLauncher {
 
         // Ctrl+Shift+Up/Down is the keyboard equivalent of dragging a drawer
         // row. Defer the settings write past this key event: its change signal
-        // rebuilds the sidebar and destroys the row currently dispatching.
+        // can change the row order.
         const modifiers = event.get_state?.() ?? 0;
         if (typeof row._drawerId === 'string' &&
             (modifiers & DRAWER_REORDER_MODIFIERS) === DRAWER_REORDER_MODIFIERS &&
@@ -2331,9 +2378,8 @@ export class AppGridLauncher {
             return;
         }
 
-        // The settings notification normally rebuilds synchronously. Announce
-        // here as well so a backend that delivers it on the next turn cannot
-        // leave keyboard users without immediate feedback.
+        // The settings notification normally updates the sidebar synchronously.
+        // Announce here as well for a backend that delivers it on the next turn.
         this._updateStatusText(message);
     }
 
@@ -2615,10 +2661,8 @@ export class AppGridLauncher {
     }
 
     /**
-     * A drawer was added or removed somewhere in the session. Rebuild the
-     * sidebar, deferring while a context menu or drag is in flight for the same
-     * reason _invalidateCatalog does: rebuilding destroys the actors those
-     * interactions are anchored to.
+     * Refresh the sidebar after a folder-list change. An external update may
+     * remove the row or result holding a drag or menu, so defer during either.
      */
     _invalidateDrawers() {
         if (!this.isOpen || !this._sidebar)
@@ -2626,10 +2670,8 @@ export class AppGridLauncher {
 
         // _draggingRow belongs here for a sharper reason than the other two: a
         // REORDER is itself a folder change, so this fires from inside
-        // acceptDrop while DND is still completing the drop. Rebuilding there
-        // destroys the row DND is holding as its drag source, and the drag-end
-        // handler then touches a destroyed actor. Defer, and let the drag's own
-        // end handler flush it.
+        // acceptDrop while DND is still completing the drop. Let the drag's
+        // end handler flush it after it has finished using the original layout.
         if (this._iconMenuOpen || this._draggingIcon || this._draggingRow) {
             this._deferredDrawerRender = true;
             return;

@@ -327,7 +327,7 @@ for (const operation of [
 // Custom launcher transitions explicitly collapse under reduced motion while
 // leaving slow-down-factor scaling to Actor.ease(), which applies it once.
 assert.match(launcherSource,
-    /function launcherAnimationDuration\(duration\)[\s\S]*enable_animations \? duration : 0/);
+    /function launcherAnimationDuration\(duration\)[\s\S]*animationsEnabled\(\) \? duration : 0/);
 assert.ok([...launcherSource.matchAll(/duration: launcherAnimationDuration\(/g)].length >= 5);
 assert.doesNotMatch(launcherSource,
     /duration: (?:DRAG_PICKUP_DURATION|DRAG_SETTLE_DURATION|HOVER_LABEL_(?:SHOW|HIDE)_TIME)/);

@@ -24,7 +24,7 @@ else
 fi
 cp -r "$probe" "$installed/"
 cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
-    "$(dirname "$0")/icon-refresh.js" "$installed/"
+    "$(dirname "$0")/icon-refresh.js" "$(dirname "$0")/dwell-interactions.js" "$installed/"
 # Real desktop entries let Shell's application system populate the launcher;
 # no application or data from the host session is used.
 mkdir -p "$XDG_DATA_HOME/applications"
@@ -45,6 +45,10 @@ session_status=0
 # shellcheck disable=SC2016 # expanded by the inner shell
 timeout --foreground --kill-after=10s 240s dbus-run-session -- bash -euo pipefail -c '
     gsettings set org.gnome.shell welcome-dialog-last-shown-version "999"
+    gsettings set org.gnome.desktop.interface enable-hot-corners false
+    # Shell banners from the fixture apps can keep a native timer alive
+    # during compositor teardown. They are not part of the dock probe.
+    gsettings set org.gnome.desktop.notifications show-banners false
     gsettings set org.gnome.shell enabled-extensions \
         "[\"idle-frames@xdock.test\", \"xdock@spencercnorton.github.io\"]"
     G_DEBUG=fatal-criticals gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &

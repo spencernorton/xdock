@@ -2,5 +2,5 @@
     "uuid": "idle-frames@xdock.test",
     "name": "XDock idle frames probe",
     "description": "Test only: counts the frames GNOME Shell paints while nothing changes.",
-    "shell-version": ["50"]
+    "shell-version": ["50", "51"]
 }

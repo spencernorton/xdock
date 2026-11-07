@@ -22,6 +22,60 @@ const check = (condition, message) => {
         throw new Error(message);
 };
 
+async function checkDrawerRows(launcher, open) {
+    const drawers = launcher._drawers;
+    const firstId = drawers.create('Actor Reuse Test One');
+    const secondId = drawers.create('Actor Reuse Test Two');
+    try {
+        await wait(150);
+        const first = launcher._drawerRows.get(firstId);
+        const second = launcher._drawerRows.get(secondId);
+        const allApps = launcher._drawerList.get_last_child();
+        check(first && second && allApps !== second, 'two drawers and All Apps are present');
+        const draggable = first._draggable;
+        let destroyed = false;
+        first.connect('destroy', () => {
+            destroyed = true;
+        });
+
+        const warmResult = launcher._visibleButtons[0];
+        launcher.close({animate: false});
+        await open();
+        check(warmResult && launcher._visibleButtons[0] === warmResult,
+            'reopening quickly must reuse cached results');
+        check(launcher._drawerRows.get(firstId) === first &&
+            launcher._drawerRows.get(secondId) === second, 'reopening must reuse drawer rows');
+        first.grab_key_focus();
+        const renamed = 'Actor Reuse Test Renamed';
+        drawers._folderSettings(firstId).set_string('name', renamed);
+        check(drawers.reorder(secondId, firstId), 'the private fixture must reorder');
+        await wait(150);
+        check(second.get_next_sibling() === first &&
+            launcher._drawerList.get_last_child() === allApps, 'the sidebar must reflect folder order');
+        check(first.has_key_focus() && first._draggable === draggable,
+            'reordering must preserve focus and the draggable');
+        check(first.label === renamed && first.accessible_name === renamed,
+            'the reused row must refresh its visible and accessible names');
+
+        launcher._openDrawerMenu(first);
+        check(launcher._drawerMenuOpen, 'the reused row must open a context menu');
+        const drawerMenu = launcher._drawerMenu;
+        check(drawers.delete(firstId), 'the private fixture must be deletable');
+        await wait(150);
+        const detached = !drawerMenu.sourceActor && !drawerMenu.focusActor && !drawerMenu.actor.visible;
+        check(destroyed && detached && launcher.isOpen,
+            'removing the anchor must detach its context menu without closing the launcher');
+        check(launcher._drawerRows.get(secondId) === second, 'removing one row must preserve its sibling');
+        launcher._openDrawerMenu(second);
+        check(launcher._drawerMenuOpen && launcher._drawerMenu === drawerMenu &&
+            drawerMenu.sourceActor === second, 'the shared menu must open from the surviving row');
+        launcher._closeDrawerMenu();
+    } finally {
+        drawers.delete(firstId);
+        drawers.delete(secondId);
+    }
+}
+
 export async function run() {
     check(GLib.getenv('GNOME_SHELL_DEV_HARNESS') === '1', 'private test session required');
     const extension = Main.extensionManager.lookup('xdock@spencercnorton.github.io');
@@ -189,6 +243,9 @@ export async function run() {
         check(frames === 0, 'an idle popup must stop redrawing');
         result.idleFrames = frames;
 
+        await checkDrawerRows(launcher, open);
+        result.drawerRows = 'pass';
+
         // Normal handoff, immediate release, and a vertical dock. A quick
         // release deliberately arrives without an intermediate hover frame.
         for (const [side, fast] of [[St.Side.BOTTOM, false], [St.Side.BOTTOM, true], [St.Side.LEFT, true]]) {
@@ -223,6 +280,11 @@ export async function run() {
                 'drag completion must release sources and callbacks');
             result.drops.push({side, fast, pinned: true});
         }
+        check(launcher._buttonsById.size > 0, 'the closed launcher must initially keep a warm cache');
+        await wait(3400);
+        check(launcher._buttonsById.size === 0 && launcher._visibleButtons.length === 0 &&
+            launcher._grid.get_n_children() === 0, 'an idle closed launcher must release the result actors');
+        result.closedCache = 'pass';
         return result;
     } finally {
         if (pressed)

@@ -19,7 +19,7 @@
 Recorded in a disposable NorviOS desktop with a demonstration account. [Recording sources and stills](docs/demos/README.md).
 
 
-XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop and supports GNOME Shell 50.
+XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop. Current releases support GNOME Shell 50; the development branch also supports GNOME Shell 51.
 
 ## What it does
 
@@ -104,7 +104,7 @@ XDock opens no network connections. The launcher ranks apps by GNOME's own usage
 ```bash
 make verify REQUIRE_GJS=1           # ESLint, the Node and GJS tests, schemas and translations
 make _build && tests/shell/idle-frames.sh _build
-                                    # a headless GNOME Shell 50: a still screen paints nothing
+                                    # on supported Shell versions: a still screen paints nothing
 make install                        # build and install into ~/.local/share/gnome-shell/extensions
 scripts/build.sh                    # the release zip and .deb, into dist/
 ```

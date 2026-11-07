@@ -98,6 +98,8 @@ export const AnimationUtils = {
 `);
 
 const utils = dataUrl('export const getPosition = () => globalThis.position;');
+const animationSettings = dataUrl((await readFile(new URL('../animationSettings.js', import.meta.url), 'utf8'))
+    .replace("'./dependencies/gi.js'", `'${gi}'`));
 
 globalThis.timelines = [];
 globalThis.timers = new Map();
@@ -106,6 +108,7 @@ globalThis.nextTimer = 1;
 const source = (await readFile(new URL('../iconAnimator.js', import.meta.url), 'utf8'))
     .replace("'./dependencies/gi.js'", `'${gi}'`)
     .replace("'./dependencies/shell/misc.js'", `'${misc}'`)
+    .replace("'./animationSettings.js'", `'${animationSettings}'`)
     .replace("'./motion.js'", `'${new URL('../motion.js', import.meta.url).href}'`)
     .replace("'./utils.js'", `'${utils}'`);
 const {IconAnimator} = await import(dataUrl(source));
