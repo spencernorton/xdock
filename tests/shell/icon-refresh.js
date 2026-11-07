@@ -16,10 +16,15 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const ID = 'dev.xdock.IconRefreshTest.desktop';
+const SIGTERM = 15;
 const WINDOW = `imports.gi.versions.Gtk = '4.0';
-const {Gtk} = imports.gi;
+const {Gtk, GLib} = imports.gi;
 const app = new Gtk.Application({application_id: 'dev.xdock.IconRefreshTest'});
 app.connect('activate', () => new Gtk.ApplicationWindow({application: app, title: 'Icon refresh'}).present());
+GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, ${SIGTERM}, () => {
+    app.quit();
+    return GLib.SOURCE_REMOVE;
+});
 app.run([]);`;
 const wait = ms => new Promise(resolve => {
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
@@ -27,6 +32,32 @@ const wait = ms => new Promise(resolve => {
         return GLib.SOURCE_REMOVE;
     });
 });
+
+async function stopWindowProcess(process) {
+    // Window removal alone does not prove that the Wayland connection closed.
+    // A stock headless Shell 51 can fail on shutdown with a live client.
+    let timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+        timeoutId = 0;
+        process.force_exit();
+        return GLib.SOURCE_REMOVE;
+    });
+    try {
+        process.send_signal(SIGTERM);
+        await new Promise((resolve, reject) => {
+            process.wait_check_async(null, (source, result) => {
+                try {
+                    source.wait_check_finish(result);
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+    } finally {
+        if (timeoutId)
+            GLib.source_remove(timeoutId);
+    }
+}
 
 function shownIcon(dash) {
     const icon = dash.getAppIcons().find(appIcon => appIcon.app?.get_id() === ID);
@@ -108,6 +139,7 @@ export async function run() {
         await wait(100);
     appSystem.disconnect(handler);
     const previous = global.settings.get_strv('favorite-apps');
+    let windowProcess = null;
     global.settings.set_strv('favorite-apps', [ID]);
     try {
         let dash = null;
@@ -122,7 +154,7 @@ export async function run() {
         // object and only swaps its desktop entry, where a stopped app is
         // looked up afresh (and so redraws by itself).
         const app = appSystem.lookup_app(ID);
-        app.activate();
+        windowProcess = Gio.Subprocess.new(['gjs', script], Gio.SubprocessFlags.NONE);
         for (let i = 0; i < 100 && app.state !== Shell.AppState.RUNNING; i++)
             await wait(100);
         if (app.state !== Shell.AppState.RUNNING)
@@ -159,7 +191,8 @@ export async function run() {
             intellihide: 'tracking paused and resumed correctly',
         };
     } finally {
-        appSystem.lookup_app(ID)?.get_windows().forEach(w => w.delete(global.get_current_time()));
         global.settings.set_strv('favorite-apps', previous);
+        if (windowProcess)
+            await stopWindowProcess(windowProcess);
     }
 }
