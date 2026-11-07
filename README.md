@@ -6,10 +6,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/spencernorton/norvi-os"><img alt="Part of NorviOS" src="https://img.shields.io/badge/NorviOS-component-FD8024.svg"></a>
+  <a href="https://norvitech.com/norvi-os/"><img alt="Part of NorviOS" src="https://img.shields.io/badge/NorviOS-component-FD8024.svg"></a>
   <a href="https://github.com/spencernorton/xdock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/spencernorton/xdock/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/spencernorton/xdock/tags"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencernorton/xdock?label=release&sort=semver"></a>
-  <a href="#install"><img alt="Install for GNOME Shell" src="https://img.shields.io/badge/install-GNOME%20Shell-4a86cf.svg"></a>
+  <a href="https://github.com/spencernorton/xdock/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/spencernorton/xdock?label=release"></a>
+  <a href="#install"><img alt="Install the Ubuntu release package" src="https://img.shields.io/badge/install-.deb-2D2D2D.svg"></a>
   <a href="COPYING"><img alt="Licence" src="https://img.shields.io/badge/licence-GPL--2.0--or--later-blue.svg"></a>
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
@@ -41,6 +41,27 @@ XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for
 
 ## Install
 
+The signed NorviTech APT archive carries XDock in its candidate channel. Use the GitHub release package below for a manual install.
+
+### Ubuntu 26.04 — the release package
+
+Download `gnome-shell-extension-xdock_*_all.deb` and `SHA256SUMS.txt` from the [latest release](https://github.com/spencernorton/xdock/releases/latest), then:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS.txt &&
+  sudo apt install ./gnome-shell-extension-xdock_*_all.deb
+```
+
+Log out and back in, then enable the extension:
+
+```bash
+gnome-extensions enable xdock@spencercnorton.github.io
+```
+
+For dock blur, install [GNOME Rounded Blur](https://github.com/spencernorton/gnome-rounded-blur#install).
+
+Turn off Dash to Dock or Ubuntu Dock if you use one, so only one dock is active.
+
 ### GNOME Shell — the release zip
 
 Download `xdock.shell-extension.zip` and `SHA256SUMS.txt` from the [latest release](https://github.com/spencernorton/xdock/releases/latest), then:
@@ -55,14 +76,6 @@ Log out and back in once so GNOME Shell sees the new extension, then enable it:
 ```bash
 gnome-extensions enable xdock@spencercnorton.github.io
 ```
-
-Turn off Dash to Dock or Ubuntu Dock first if you use one: two docks on the same screen get in each other's way.
-
-### Ubuntu 26.04 — the release package
-
-The same release carries `gnome-shell-extension-xdock_*_all.deb`, which installs the extension for every user and its settings schema and translations system-wide: `sudo apt install ./gnome-shell-extension-xdock_*_all.deb`. Then log out and in, and enable it as above. The package recommends `gnome-rounded-blur`, from the [GNOME Rounded Blur releases](https://github.com/spencernorton/gnome-rounded-blur/releases/latest), which the dock blur needs.
-
-The extension is not on extensions.gnome.org.
 
 ## Where your data lives
 
