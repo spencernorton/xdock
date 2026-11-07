@@ -18,10 +18,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 const ID = 'dev.xdock.IconRefreshTest.desktop';
 const SIGTERM = 15;
 const WINDOW = `imports.gi.versions.Gtk = '4.0';
-const {Gtk, GLib} = imports.gi;
+const {Gtk, GLib, GLibUnix} = imports.gi;
 const app = new Gtk.Application({application_id: 'dev.xdock.IconRefreshTest'});
 app.connect('activate', () => new Gtk.ApplicationWindow({application: app, title: 'Icon refresh'}).present());
-GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, ${SIGTERM}, () => {
+GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, ${SIGTERM}, () => {
     app.quit();
     return GLib.SOURCE_REMOVE;
 });

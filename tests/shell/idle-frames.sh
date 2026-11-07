@@ -46,6 +46,9 @@ session_status=0
 timeout --foreground --kill-after=10s 240s dbus-run-session -- bash -euo pipefail -c '
     gsettings set org.gnome.shell welcome-dialog-last-shown-version "999"
     gsettings set org.gnome.desktop.interface enable-hot-corners false
+    # Shell banners from the fixture apps can keep a native timer alive
+    # during compositor teardown. They are not part of the dock probe.
+    gsettings set org.gnome.desktop.notifications show-banners false
     gsettings set org.gnome.shell enabled-extensions \
         "[\"idle-frames@xdock.test\", \"xdock@spencercnorton.github.io\"]"
     G_DEBUG=fatal-criticals gnome-shell --headless --wayland --virtual-monitor 1280x800 > "$1" 2>&1 &
