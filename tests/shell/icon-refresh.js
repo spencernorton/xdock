@@ -9,9 +9,11 @@
 // redraws its icon, or an icon override applied or removed -- must still show
 // the new picture on the dock without a logout.
 /* eslint-disable no-await-in-loop -- waits on the app system in order */
+import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -62,6 +64,159 @@ async function stopWindowProcess(process) {
 function shownIcon(dash) {
     const icon = dash.getAppIcons().find(appIcon => appIcon.app?.get_id() === ID);
     return icon?.icon?.icon?.gicon?.to_string() ?? null;
+}
+
+async function waitFor(condition, message) {
+    for (let i = 0; i < 100; i++) {
+        if (condition())
+            return;
+        await wait(50);
+    }
+    throw new Error(message);
+}
+
+async function checkStationaryMagnification(manager, settings, app, script) {
+    const favoriteIds = Array.from({length: 6}, (_unused, index) =>
+        `xdock-popup-test-0${index}.desktop`);
+    const previousFavorites = global.settings.get_strv('favorite-apps');
+    const previousAnimations = global.force_animations;
+    const dockSettings = {
+        'dock-fixed': new GLib.Variant('b', true),
+        manualhide: new GLib.Variant('b', false),
+        'icon-size-fixed': new GLib.Variant('b', false),
+        'show-favorites': new GLib.Variant('b', true),
+        'show-running': new GLib.Variant('b', true),
+        'magnify-icons': new GLib.Variant('b', true),
+        'magnify-max-scale': new GLib.Variant('d', 1.6),
+        'magnify-duration': new GLib.Variant('i', 125),
+    };
+    const previousSettings = Object.keys(dockSettings).map(key => [key, settings.get_value(key)]);
+    const previousPosition = settings.get_enum('dock-position');
+    const seat = global.stage.get_context().get_backend().get_default_seat();
+    const pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+    const move = (x, y) => pointer.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
+    const icons = () => manager.mainDock.dash.getAppIcons();
+    const containsApp = () => icons().some(icon => icon.app.get_id() === ID);
+    const center = actor => {
+        const [x, y] = actor.get_transformed_position();
+        const [width, height] = actor.get_transformed_size();
+        return [x + width / 2, y + height / 2];
+    };
+    let child = null;
+    const stop = async () => {
+        const process = child;
+        child = null;
+        if (process)
+            await stopWindowProcess(process);
+    };
+
+    try {
+        for (const [key, value] of Object.entries(dockSettings))
+            settings.set_value(key, value);
+        settings.set_enum('dock-position', St.Side.BOTTOM);
+        global.force_animations = true;
+        global.settings.set_strv('favorite-apps', favoriteIds);
+        Main.overview.hide();
+        move(100, 100);
+        await wait(700);
+        await waitFor(() => favoriteIds.every(id => icons().some(icon => icon.app.get_id() === id)),
+            'the fixed dock never showed its magnification fixtures');
+        if (containsApp())
+            throw new Error('the unpinned Wayland app must be absent before launch');
+        const hovered = icons().find(icon => icon.app.get_id() === favoriteIds[2]);
+        const [x, y] = center(hovered);
+        const reach = hovered.width * 1.5;
+        const scale = icon => icon._floatLayer?.visible ? icon._floatClone.scale_x : 1;
+        const nearbyPeak = () => Math.max(1, ...icons().filter(icon =>
+            Math.abs(center(icon)[0] - x) <= reach).map(scale));
+        move(x, y);
+        await waitFor(() => scale(hovered) > 1.45, 'the starting hover did not magnify');
+        const [stationaryX, stationaryY] = global.get_pointer();
+
+        const checkMutation = async (name, present, mutate) => {
+            let minimum = Infinity;
+            let frames = 0;
+            let maxFrameStep = 0;
+            let sampledSteps = 0;
+            const scales = () => new Map(icons().filter(icon =>
+                favoriteIds.includes(icon.app.get_id())).map(icon => [icon, scale(icon)]));
+            let previousScales = scales();
+            let previousTime = GLib.get_monotonic_time();
+            const paintId = global.stage.connect('after-paint', () => {
+                const time = GLib.get_monotonic_time();
+                const currentScales = scales();
+                // A stalled compositor can legitimately cover more of the
+                // easing curve in one frame. Check the steps while painting
+                // at a normal cadence and compare only surviving actors.
+                if (time - previousTime <= 40_000) {
+                    for (const [icon, current] of currentScales) {
+                        const previous = previousScales.get(icon);
+                        if (previous !== undefined) {
+                            maxFrameStep = Math.max(maxFrameStep, Math.abs(current - previous));
+                            sampledSteps++;
+                        }
+                    }
+                }
+                previousTime = time;
+                previousScales = currentScales;
+                minimum = Math.min(minimum, nearbyPeak());
+                frames++;
+            });
+            try {
+                await mutate();
+                const state = present ? Shell.AppState.RUNNING : Shell.AppState.STOPPED;
+                await waitFor(() => containsApp() === present && app.state === state,
+                    `the Wayland app icon did not ${name}`);
+                await wait(650);
+                const [nextX, nextY] = global.get_pointer();
+                if (nextX !== stationaryX || nextY !== stationaryY)
+                    throw new Error(`the pointer moved during app icon ${name}`);
+                const settled = nearbyPeak();
+                if (settled <= 1.2)
+                    throw new Error(`stationary pointer lost magnification after app icon ${name} (scale ${settled})`);
+                if (!frames)
+                    throw new Error(`app icon ${name} did not paint any frames`);
+                if (maxFrameStep > 0.45)
+                    throw new Error(`app icon ${name} caused a one-frame scale jump of ${maxFrameStep}`);
+                return {settled, minimum, frames, maxFrameStep, sampledSteps};
+            } finally {
+                global.stage.disconnect(paintId);
+            }
+        };
+
+        const added = await checkMutation('appear', true, () => {
+            child = Gio.Subprocess.new(['gjs', script], Gio.SubprocessFlags.NONE);
+        });
+        const removed = await checkMutation('leave', false, stop);
+        // A repeated work-area notification without geometry changes should
+        // not reset the still-active hover or start a shrink and grow cycle.
+        const beforeWorkarea = nearbyPeak();
+        let workareaMinimum = beforeWorkarea;
+        const workareaPaintId = global.stage.connect('after-paint', () => {
+            workareaMinimum = Math.min(workareaMinimum, nearbyPeak());
+        });
+        try {
+            global.display.emit('workareas-changed');
+            await wait(350);
+        } finally {
+            global.stage.disconnect(workareaPaintId);
+        }
+        if (Math.min(workareaMinimum, nearbyPeak()) < beforeWorkarea - 0.1)
+            throw new Error('an unchanged work area disturbed stationary magnification');
+        return {added, removed, unchangedWorkarea: 'pass'};
+    } finally {
+        try {
+            await stop();
+        } finally {
+            move(100, 100);
+            global.settings.set_strv('favorite-apps', previousFavorites);
+            for (const [key, value] of previousSettings)
+                settings.set_value(key, value);
+            settings.set_enum('dock-position', previousPosition);
+            global.force_animations = previousAnimations;
+            await wait(700);
+        }
+    }
 }
 
 async function overview(show) {
@@ -139,6 +294,11 @@ export async function run() {
         await wait(100);
     appSystem.disconnect(handler);
     const previous = global.settings.get_strv('favorite-apps');
+    const app = appSystem.lookup_app(ID);
+    if (!app)
+        throw new Error('the private Wayland application was not registered');
+    const settings = extension.stateObj.getSettings('org.gnome.shell.extensions.xdock');
+    const stationaryMagnify = await checkStationaryMagnification(DockManager.getDefault(), settings, app, script);
     let windowProcess = null;
     global.settings.set_strv('favorite-apps', [ID]);
     try {
@@ -153,7 +313,6 @@ export async function run() {
         // Running is the case that matters: Shell keeps a running app's
         // object and only swaps its desktop entry, where a stopped app is
         // looked up afresh (and so redraws by itself).
-        const app = appSystem.lookup_app(ID);
         windowProcess = Gio.Subprocess.new(['gjs', script], Gio.SubprocessFlags.NONE);
         for (let i = 0; i < 100 && app.state !== Shell.AppState.RUNNING; i++)
             await wait(100);
@@ -180,7 +339,6 @@ export async function run() {
         const window = app.get_windows()[0];
         if (!window)
             throw new Error('no Wayland window available for the overlap check');
-        const settings = extension.stateObj.getSettings('org.gnome.shell.extensions.xdock');
         await checkIntellihide(settings, DockManager.getDefault().mainDock._intellihide,
             window.get_compositor_private());
         return {
@@ -189,6 +347,7 @@ export async function run() {
             running,
             refreshed: running && /media-playback-start/.test(after ?? ''),
             intellihide: 'tracking paused and resumed correctly',
+            stationaryMagnify,
         };
     } finally {
         global.settings.set_strv('favorite-apps', previous);

@@ -1377,7 +1377,10 @@ const XDock = GObject.registerClass({
     }
 
     _resetPosition() {
-        this.dash.invalidateMagnifyGeometry();
+        const [oldX, oldY] = this.get_position();
+        const oldSize = this._isHorizontal ? this.width : this.height;
+        const wasFixed = this.has_style_class_name('fixed');
+        const wasExtended = this.has_style_class_name('extended');
         // Ensure variables linked to settings are updated.
         this._updateVisibilityMode();
 
@@ -1434,6 +1437,11 @@ const XDock = GObject.registerClass({
                 this.remove_style_class_name('extended');
             }
         }
+
+        const size = this._isHorizontal ? this.width : this.height;
+        if (this.x !== oldX || this.y !== oldY || size !== oldSize ||
+            fixedIsEnabled !== wasFixed || extendHeight !== wasExtended)
+            this.dash.invalidateMagnifyGeometry();
     }
 
     _updateVisibleDesktop() {
