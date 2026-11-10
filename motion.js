@@ -74,6 +74,7 @@ export function planIconMotion({hovered = false, pressed = false} = {}) {
  * @param {number} params.rangeFactor falloff reach, in icon sizes
  * @param {number} [params.maxTotal] longest total the row may grow to
  * @param {number} [params.restTotal] total length of the row at rest
+ * @param {number[]} [scales] scratch space to reuse between frames
  * @returns {number[]} one scale per centre, each >= 1
  */
 export function planMagnification({
@@ -85,34 +86,32 @@ export function planMagnification({
     rangeFactor,
     maxTotal = Infinity,
     restTotal = 0,
-} = {}) {
-    const rest = centers.map(() => 1);
+} = {}, scales = []) {
+    scales.length = centers.length;
+    const limited = Number.isFinite(maxTotal);
     if (!centers.length || !Number.isFinite(pointer) ||
         !Number.isFinite(itemSize) || itemSize <= 0 ||
         !Number.isFinite(maxScale) || maxScale <= 1 ||
         !Number.isFinite(rangeFactor) || rangeFactor <= 0 ||
-        !Number.isFinite(influence) || influence <= 0)
-        return rest;
+        !Number.isFinite(influence) || influence <= 0 ||
+        (limited && !(maxTotal > restTotal)))
+        return scales.fill(1);
 
     const reach = rangeFactor * itemSize;
     const peak = (maxScale - 1) * Math.min(influence, 1);
-    const scales = centers.map(center => {
-        if (!Number.isFinite(center))
-            return 1;
-        const distance = Math.abs(pointer - center) / reach;
-        if (distance >= 1)
-            return 1;
-        const falloff = Math.cos(distance * Math.PI / 2) ** 2;
-        return 1 + peak * falloff;
-    });
+    let growth = 0;
+    for (let i = 0; i < centers.length; i++) {
+        const center = centers[i];
+        const distance = Number.isFinite(center) ? Math.abs(pointer - center) / reach : Infinity;
+        const extra = distance < 1 ? peak * Math.cos(distance * Math.PI / 2) ** 2 : 0;
+        scales[i] = 1 + extra;
+        growth += extra * itemSize;
+    }
 
-    if (Number.isFinite(maxTotal) && maxTotal > restTotal) {
-        const growth = scales.reduce((sum, s) => sum + (s - 1) * itemSize, 0);
-        const headroom = maxTotal - restTotal;
-        if (growth > headroom)
-            return scales.map(s => 1 + (s - 1) * headroom / growth);
-    } else if (Number.isFinite(maxTotal)) {
-        return rest;
+    const headroom = maxTotal - restTotal;
+    if (limited && growth > headroom) {
+        for (let i = 0; i < scales.length; i++)
+            scales[i] = 1 + (scales[i] - 1) * headroom / growth;
     }
 
     return scales;
@@ -128,9 +127,10 @@ export function planMagnification({
  * @param {number} target the value being approached
  * @param {number} durationMs the approach time constant window
  * @param {number} dtMs milliseconds since the previous step
+ * @param {number} [epsilon] absolute distance at which to finish
  * @returns {number} the next eased value
  */
-export function planMagnifyApproach(current, target, durationMs, dtMs) {
+export function planMagnifyApproach(current, target, durationMs, dtMs, epsilon = 0.001) {
     if (!Number.isFinite(current))
         return target;
     if (!Number.isFinite(target) || !Number.isFinite(dtMs) || dtMs < 0 ||
@@ -138,7 +138,7 @@ export function planMagnifyApproach(current, target, durationMs, dtMs) {
         return target;
 
     const next = current + (target - current) * (1 - Math.exp(-3 * dtMs / durationMs));
-    return Math.abs(target - next) < 0.001 * Math.max(1, Math.abs(target)) ? target : next;
+    return Math.abs(target - next) <= epsilon ? target : next;
 }
 
 export const IndicatorTransition = Object.freeze({

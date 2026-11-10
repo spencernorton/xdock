@@ -7,6 +7,7 @@ All notable changes to XDock are documented here.
 - Add GNOME Shell 51 support and test native interactions on Shell 50 and 51.
 - Pace dock magnification with the display and react to pointer movement without polling.
 - Ease the dock through running-app changes and restore magnification under a stationary pointer.
+- Cut repeated layout work during magnification and keep its motion consistent across refresh rates and dock sizes.
 - Reuse drawer rows when the launcher reopens, and release app buttons after the launcher has been closed for three seconds.
 - Suspend window overlap tracking in the overview and whenever intelligent hide is off.
 - Respect GNOME Shell 51's separate reduced motion preference.

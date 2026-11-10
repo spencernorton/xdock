@@ -586,6 +586,13 @@ equal(hiding.completedState, DockMotionState.HIDDEN);
     assert.deepEqual(planMagnification({...base, influence: 0}), centers.map(() => 1));
     assertions++;
 
+    const scratch = [];
+    assert.equal(planMagnification(base, scratch), scratch);
+    assert.deepEqual(scratch, scales);
+    assert.equal(planMagnification({...base, influence: 0}, scratch), scratch);
+    assert.deepEqual(scratch, centers.map(() => 1), 'reused space clears the previous peak');
+    assertions += 4;
+
     // A full dock keeps the shape but lowers the peak to fit its budget.
     const capped = planMagnification({...base, restTotal: 560, maxTotal: 600});
     const growth = capped.reduce((sum, s) => sum + (s - 1) * 80, 0);
@@ -624,6 +631,20 @@ equal(hiding.completedState, DockMotionState.HIDDEN);
     assert.equal(planMagnifyApproach(5, 9, 0, 16), 9, 'zero duration is instant');
     assertions++;
     assert.equal(planMagnifyApproach(NaN, 9, 125, 16), 9);
+    assertions++;
+
+    const refreshProgress = [60, 120, 240].map(rate => {
+        let position = 2800;
+        for (let frame = 0; frame < rate / 10; frame++)
+            position = planMagnifyApproach(position, 3200, 125, 1000 / rate, 0.125);
+        return position;
+    });
+    for (const position of refreshProgress)
+        assert.ok(Math.abs(position - refreshProgress[0]) < 1e-9, 'same motion after 100 ms');
+    assertions += refreshProgress.length;
+
+    const nearEnd = planMagnifyApproach(3198, 3200, 125, 1000 / 240, 0.125);
+    assert.ok(nearEnd > 3198 && nearEnd < 3200, 'a distant icon cannot snap early');
     assertions++;
 }
 

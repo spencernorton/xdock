@@ -405,9 +405,10 @@ export const DockAbstractAppIcon = GObject.registerClass({
         if (this._floatGone || scale === this._magnifyScale)
             return;
         this._magnifyScale = scale;
-        if (scale > 1)
+        if (scale > 1 && !this._floatLayer)
             this._ensureFloat();
-        this._syncFloat();
+        else
+            this._syncFloat(false);
     }
 
     _ensureFloat() {
@@ -419,11 +420,14 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
         this._floatLayer = new FloatLayer({reactive: false, visible: false});
         this._floatClone = new FloatClone({source: iconBin, reactive: false});
+        const [dx, dy] = ICON_LIFT_VECTOR[Utils.getPosition()] ??
+            ICON_LIFT_VECTOR[St.Side.BOTTOM];
+        this._floatClone.set_pivot_point(0.5 - dx / 2, 0.5 - dy / 2);
         this._floatLayer.add_child(this._floatClone);
         Main.uiGroup.add_child(this._floatLayer);
 
         // The animations write these; floating starts and ends with them.
-        const sync = () => this._syncFloat();
+        const sync = () => this._syncFloat(false);
         this._floatLayer.connectObject(
             'notify::translation-x', sync,
             'notify::translation-y', sync, this);
@@ -445,7 +449,12 @@ export const DockAbstractAppIcon = GObject.registerClass({
     _connectFloatChain() {
         this._disconnectFloatChain();
         const iconBin = this.icon?._iconBin;
-        const sync = () => this._syncFloat();
+        const sync = () => {
+            if (this._floatLayer?.visible)
+                this._syncFloat();
+            else
+                this.get_parent()?.syncLabelPosition?.();
+        };
         for (let actor = iconBin; actor && actor !== Main.uiGroup; actor = actor.get_parent()) {
             actor.connectObject(
                 'notify::allocation', sync,
@@ -478,7 +487,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
             Main.uiGroup.set_child_above_sibling(label, this._floatLayer);
     }
 
-    _syncFloat() {
+    _syncFloat(updatePosition = true) {
         const layer = this._floatLayer;
         const clone = this._floatClone;
         const iconBin = this._floatGone ? null : this.icon?._iconBin;
@@ -488,7 +497,10 @@ export const DockAbstractAppIcon = GObject.registerClass({
         const floating = this.mapped && (this._magnifyScale > 1 ||
             layer.translation_x !== 0 || layer.translation_y !== 0 ||
             clone.translation_x !== 0 || clone.translation_y !== 0);
-        if (floating !== layer.visible) {
+        const visibilityChanged = floating !== layer.visible;
+        if (floating && (visibilityChanged || (updatePosition && iconBin.has_allocation())))
+            this._syncFloatPosition(iconBin);
+        if (visibilityChanged) {
             if (floating)
                 this._stackFloat();
             layer.visible = floating;
@@ -499,25 +511,28 @@ export const DockAbstractAppIcon = GObject.registerClass({
             // The clone paints the bin at its own opacity, so it is unaffected.
             this.icon.opacity = floating ? 0 : 255;
         }
-        this.get_parent()?.syncLabelPosition?.();
-        if (!floating)
-            return;
+        if (floating) {
+            const scale = this._magnifyScale * iconBin.scale_x;
+            if (clone.scale_x !== scale)
+                clone.set_scale(scale, scale);
+        }
+        if (floating || visibilityChanged)
+            this.get_parent()?.syncLabelPosition?.();
+    }
 
-        // Rest position of the bin. Its own hover/press transform is applied
-        // to the clone below rather than read back through the stage, where
-        // it would count twice.
-        const [parentX, parentY] = iconBin.get_parent().get_transformed_position();
+    _syncFloatPosition(iconBin) {
+        // Read the bin before its hover/press scale, which the clone already
+        // applies. Position the copy before showing it. Later allocations
+        // move it without forcing layout on every scale change.
         const box = iconBin.get_allocation_box();
-        layer.set_position(
-            parentX + box.x1 + iconBin.translation_x,
-            parentY + box.y1 + iconBin.translation_y);
-
-        const [dx, dy] = ICON_LIFT_VECTOR[Utils.getPosition()] ??
-            ICON_LIFT_VECTOR[St.Side.BOTTOM];
-        const scale = this._magnifyScale * iconBin.scale_x;
-        clone.set_pivot_point(0.5 - dx / 2, 0.5 - dy / 2);
-        if (clone.scale_x !== scale)
-            clone.set_scale(scale, scale);
+        const [parentX, parentY] = iconBin.get_parent().get_transformed_position();
+        const x = parentX + box.x1 + iconBin.translation_x;
+        const y = parentY + box.y1 + iconBin.translation_y;
+        if (this._floatX !== x || this._floatY !== y) {
+            this._floatX = x;
+            this._floatY = y;
+            this._floatLayer.set_position(x, y);
+        }
     }
 
     _updateIconMotion() {
@@ -731,16 +746,17 @@ export const DockAbstractAppIcon = GObject.registerClass({
         if (!this.get_stage())
             return;
 
-        const rect = new Mtk.Rectangle();
-
-        [rect.x, rect.y] = this.get_transformed_position();
-        [rect.width, rect.height] = this.get_transformed_size();
-
         let windows = this.getWindows();
         if (Docking.DockManager.settings.multiMonitor) {
             const {monitorIndex} = this;
             windows = windows.filter(w => w.get_monitor() === monitorIndex);
         }
+        if (!windows.length)
+            return;
+
+        const rect = new Mtk.Rectangle();
+        [rect.x, rect.y] = this.get_transformed_position();
+        [rect.width, rect.height] = this.get_transformed_size();
         windows.forEach(w => w.set_icon_geometry(rect));
     }
 
