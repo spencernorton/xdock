@@ -80,8 +80,8 @@ class DockDashItemContainer extends Dash.DashItemContainer {
         if (quantized === this._magnifyScale)
             return;
         this._magnifyScale = quantized;
-        this.queue_relayout();
         this.child?.setMagnifyScale?.(quantized);
+        this.queue_relayout();
     }
 
     vfunc_get_preferred_width(forHeight) {
@@ -103,7 +103,8 @@ class DockDashItemContainer extends Dash.DashItemContainer {
     // Keeps a showing label on the magnified icon as it grows, shrinks and
     // is pushed along by its neighbours.
     syncLabelPosition() {
-        if (!this.label?.visible || !this._labelText || !this.label.get_stage())
+        if (!this.label?.visible || !this._labelText || !this.has_allocation() ||
+            !this.label.get_stage())
             return;
         const [x, y] = AppIcons.itemPlaceLabel.call(this);
         this.label.set_position(x, y);
@@ -664,6 +665,11 @@ export const DockDash = GObject.registerClass({
         }
     }
 
+    get _magnifyLimit() {
+        const limit = this._isHorizontal ? this._maxWidth : this._maxHeight;
+        return limit > 0 ? limit : Infinity;
+    }
+
     _magnifyOnPointer() {
         if (this._magnifyFreezes.size || this._magnifyLayoutId)
             return;
@@ -673,7 +679,8 @@ export const DockDash = GObject.registerClass({
 
         if (this._magnifyInfluence === 0 && !this._magnifyTimeline?.is_playing()) {
             this._magnifyRest ??= this._captureMagnifyRest();
-            if (!this._magnifyRest || !this._isMagnifyHit(x, y, this._magnifyRest))
+            if (!this._magnifyRest || this._magnifyLimit <= this._magnifyRest.total ||
+                !this._isMagnifyHit(x, y, this._magnifyRest))
                 return;
         }
 
@@ -683,18 +690,25 @@ export const DockDash = GObject.registerClass({
     }
 
     _startMagnifyTimeline() {
+        if (this._magnifyTimeline?.is_playing())
+            return;
         if (!this._magnifyTimeline) {
             this._magnifyTimeline = new Clutter.Timeline({
                 actor: this, duration: 1000, repeat_count: -1,
             });
             this._magnifyTimeline.connectObject('new-frame', timeline => {
-                // The first frame has a zero delta. A 1 ms step starts the
-                // approach and subsequent steps use the actual frame time.
-                const dtMs = Math.min(Math.max(1, timeline.get_delta()), 100);
+                // Clutter reports zero on the first frame. Count the time
+                // since the motion arrived so it can affect that frame too.
+                const elapsed = this._magnifyStartedAt
+                    ? (GLib.get_monotonic_time() - this._magnifyStartedAt) / 1000
+                    : timeline.get_delta();
+                this._magnifyStartedAt = 0;
+                const dtMs = Math.min(Math.max(1, elapsed), 100);
                 if (!this._magnifyStep(dtMs))
                     timeline.stop();
             }, this);
         }
+        this._magnifyStartedAt = GLib.get_monotonic_time();
         this._magnifyTimeline.start();
     }
 
@@ -728,7 +742,7 @@ export const DockDash = GObject.registerClass({
             const target = axis - rest.axisStart;
             this._magnifyPointer = this._magnifyPointer === null
                 ? target
-                : Motion.planMagnifyApproach(this._magnifyPointer, target, duration, dtMs);
+                : Motion.planMagnifyApproach(this._magnifyPointer, target, duration, dtMs, 0.125);
         }
         if (this._magnifyInfluence === 0) {
             this._resetMagnify();
@@ -744,14 +758,15 @@ export const DockDash = GObject.registerClass({
             influence: this._magnifyInfluence,
             maxScale: settings.magnifyMaxScale,
             rangeFactor: settings.magnifyRangeFactor,
-            maxTotal: rest.maxTotal,
+            maxTotal: this._magnifyLimit,
             restTotal: rest.total,
-        });
+        }, rest.scales);
         // Removed actors can still be in the snapshot during the fade.
         const liveItems = rebasing ? new Set(this._box.get_children()) : null;
         rest.items.forEach((item, i) => {
-            if (!liveItems || liveItems.has(item))
-                item.setMagnifyScale(scales[i]);
+            const scale = scales[i];
+            if ((!liveItems || liveItems.has(item)) && (scale > 1 || item._magnifyScale !== 1))
+                item.setMagnifyScale(scale);
         });
         return this._magnifyInfluence !== (inside ? 1 : 0) ||
             (inside && this._magnifyPointer !== axis - rest.axisStart);
@@ -773,18 +788,18 @@ export const DockDash = GObject.registerClass({
             return this._isHorizontal ? box.get_width() : box.get_height();
         };
         const pitch = centers.length > 1
-            ? (centers.at(-1) - centers[0]) / (centers.length - 1)
+            ? Math.abs(centers.at(-1) - centers[0]) / (centers.length - 1)
             : axisSize(items[0]);
         if (!(pitch > 0))
             return null;
 
         const [boxW, boxH] = this._box.get_transformed_size();
-        const axisMax = this._isHorizontal ? this._maxWidth : this._maxHeight;
         const {settings} = Docking.DockManager;
         const acrossOverflow = pitch * Math.max(0, settings.magnifyMaxScale - 1);
         return {
             items,
             centers,
+            scales: new Array(items.length),
             pitch,
             total: this._isHorizontal ? boxW : boxH,
             axisStart: this._isHorizontal ? stageX : stageY,
@@ -794,7 +809,6 @@ export const DockDash = GObject.registerClass({
             // interior; the pointer standing on that overflow is still
             // "on the dock" or magnification collapses under it.
             acrossOverflow,
-            maxTotal: axisMax > 0 ? axisMax : Infinity,
         };
     }
 
@@ -935,8 +949,7 @@ export const DockDash = GObject.registerClass({
         appIcon.icon.setIconSize(this.iconSize);
         this._hookUpLabel(item, appIcon);
 
-        item.connectObject('notify::position', () => appIcon.updateIconGeometry(), appIcon);
-        item.connectObject('notify::size', () => appIcon.updateIconGeometry(), appIcon);
+        item.connectObject('notify::allocation', () => appIcon.updateIconGeometry(), appIcon);
 
         return item;
     }
