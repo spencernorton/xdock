@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Keep magnified icons moving through fractional positions instead of stepping sideways as their slots resize.
+- Keep running-app lights centered beneath their icons during magnification and fit the enlarged row within the dock.
 - Capture magnification anchors from the same completed layout when the dock recenters.
 - Move floating icons with paint transforms so they can follow the dock within the current frame.
 - Add GNOME Shell 51 support and test native interactions on Shell 50 and 51.
