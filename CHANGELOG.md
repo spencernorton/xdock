@@ -4,6 +4,10 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Make the application launcher about half its former footprint while keeping readable text and normal-sized app icons.
+- Refine native popup easing and continue interrupted open/close animations from their current position.
+- Exercise launcher motion, reduced motion and scrolling in the native tests on both supported GNOME Shell versions.
+
 ## 2.3.0 — 2026-11-11
 
 - Keep magnified icons moving through fractional positions instead of stepping sideways as their slots resize.

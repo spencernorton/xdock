@@ -19,6 +19,8 @@ import {run as dwellInteractions} from '../dwell-interactions.js';
 import {run as popupInteractions} from '../popup-interactions.js';
 import {run as magnifyInteractions} from '../magnify-interactions.js';
 import {run as iconRefresh} from '../icon-refresh.js';
+import {run as launcherMotion} from '../launcher-motion.js';
+import {run as launcherScrolling} from '../launcher-scrolling.js';
 
 const XDOCK = 'xdock@spencercnorton.github.io';
 
@@ -176,6 +178,8 @@ export default class IdleFramesProbe extends Extension {
 
         notes.forEach(note => note.actor?.remove_effect(note));
         report('popup interactions', JSON.stringify(await popupInteractions()));
+        report('launcher motion', JSON.stringify(await launcherMotion()));
+        report('launcher scrolling', JSON.stringify(await launcherScrolling()));
         report('magnify interactions', JSON.stringify(await magnifyInteractions()));
         const refresh = await iconRefresh();
         report('icon refresh', JSON.stringify(refresh));

@@ -58,8 +58,8 @@ assert.deepEqual(computeGridLayout({
     workAreaHeight: 540,
     textScale: 1,
 }), {
-    columns: 7,
-    width: 728,
+    columns: 6,
+    width: 480,
     sidebarWidth: 0,
     gridHeight: 356,
     iconSize: 48,
@@ -75,6 +75,21 @@ assert.equal(fixedHeight.maxHeight, undefined,
 assert.ok(fixedHeight.gridHeight > 0);
 // Nothing in the layout takes a result count, which is what keeps it constant.
 assert.equal(computeGridLayout.length, 1);
+
+// The compact surface occupies roughly half the former launcher footprint,
+// without shrinking the readable app icons or the desktop's text scale.
+const compact = computeGridLayout({
+    workAreaWidth: 3840,
+    workAreaHeight: 2128,
+    sidebarWidth: SIDEBAR_WIDTH,
+    chromeHeight: computeHeaderHeight(64) + 40,
+});
+const surfaceArea = (compact.width + compact.sidebarWidth + 38) *
+    (compact.gridHeight + computeHeaderHeight(64) + 40);
+const formerArea = (728 + 160 + 38) * 680;
+assert.ok(surfaceArea / formerArea >= 0.4 && surfaceArea / formerArea <= 0.55,
+    'the preferred launcher content footprint must be about half its former area');
+assert.equal(compact.iconSize, 48, 'compacting the panel must not miniaturize its icons');
 
 // Chrome (the header bar, and later the footer) is spent FROM the popup's
 // height budget rather than added on top of it, so gaining a bar must not make
@@ -123,7 +138,7 @@ const largeTextLayout = computeGridLayout({
     workAreaHeight: 768,
     textScale: 1.8,
 });
-assert.equal(largeTextLayout.columns, 4);
+assert.equal(largeTextLayout.columns, 3);
 assert.equal(largeTextLayout.iconSize, 40);
 assert.ok(largeTextLayout.width <= 1334);
 
@@ -170,10 +185,9 @@ assert.equal(validateDrawerName('x'.repeat(MAX_DRAWER_NAME_LENGTH + 1), []).reas
     'too-long');
 
 // The sidebar shares the popup's width budget; without subtracting it the
-// popup overflows the work area on small screens. Measured at a width where
-// the sidebar actually bites -- at 960 the 800px target cap dominates and both
-// layouts land on the same 7 columns, so that input proves nothing.
-const narrow = {workAreaWidth: 700, workAreaHeight: 540, textScale: 1};
+// popup overflows the work area on small screens. Use a width where the
+// sidebar actually reduces the result columns rather than the preferred cap.
+const narrow = {workAreaWidth: 500, workAreaHeight: 540, textScale: 1};
 const withSidebar = computeGridLayout({...narrow, sidebarWidth: SIDEBAR_WIDTH});
 const withoutSidebar = computeGridLayout(narrow);
 assert.ok(withSidebar.width < withoutSidebar.width,
@@ -194,7 +208,7 @@ for (const workAreaWidth of [240, 320, 360]) {
         workAreaHeight: 640,
         sidebarWidth: SIDEBAR_WIDTH,
     });
-    assert.equal(layout.columns, 1);
+    assert.ok(layout.columns >= 1 && layout.columns <= 2);
     assert.ok(layout.width > 0);
     assert.ok(layout.width + layout.sidebarWidth + 32 + 6 <= workAreaWidth,
         `launcher must fit a ${workAreaWidth}px logical work area`);

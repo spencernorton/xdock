@@ -4,14 +4,15 @@ export const MAX_VISIBLE_RESULTS = 72;
 export const QUICK_ACCESS_COUNT = 6;
 
 const MIN_COLUMNS = 1;
-const MAX_COLUMNS = 8;
-const BASE_CELL_WIDTH = 104;
+const MAX_COLUMNS = 6;
+const BASE_CELL_WIDTH = 80;
+const MAX_GRID_WIDTH = 480;
 const POPUP_HORIZONTAL_INSET = 32;
 const CONTENT_SPACING = 6;
 const MIN_SIDEBAR_WIDTH = 72;
 const MIN_GRID_WIDTH = 80;
 const MIN_POPUP_HEIGHT = 220;
-const MAX_POPUP_HEIGHT = 680;
+const MAX_POPUP_HEIGHT = 440;
 // Floor for the results area once the header and footer have taken their share.
 const MIN_GRID_HEIGHT = 160;
 
@@ -26,7 +27,7 @@ const MIN_GRID_HEIGHT = 160;
  * so both sides of the popup agree before anything is allocated. Very narrow
  * work areas may reduce it to leave one usable result column.
  */
-export const SIDEBAR_WIDTH = 160;
+export const SIDEBAR_WIDTH = 144;
 
 /** Breathing room above and below the header's avatar, in logical pixels. */
 export const HEADER_PADDING = 8;
@@ -219,7 +220,9 @@ export function computeGridLayout({
     const effectiveSidebar = Math.min(requestedSidebar,
         Math.max(minimumSidebar, contentBudget - cellWidth));
     const availableWidth = Math.max(1, contentBudget - effectiveSidebar);
-    const targetWidth = Math.min(availableWidth, 800);
+    // Keep the launcher a compact dock popover rather than a second overview.
+    // Reduce the surface, not the desktop's text or pointer target sizes.
+    const targetWidth = Math.min(availableWidth, MAX_GRID_WIDTH);
     const columns = clamp(Math.floor(targetWidth / cellWidth), MIN_COLUMNS, MAX_COLUMNS);
     const width = Math.min(availableWidth, columns * cellWidth);
     // A fixed height, NOT a ceiling. Applied as max-height the popup grew and
