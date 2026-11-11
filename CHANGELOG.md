@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+## 2.3.0 — 2026-11-11
+
 - Keep magnified icons moving through fractional positions instead of stepping sideways as their slots resize.
 - Keep running-app lights centered beneath their icons during magnification and fit the enlarged row within the dock.
 - Capture magnification anchors from the same completed layout when the dock recenters.

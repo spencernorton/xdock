@@ -19,7 +19,7 @@
 Recorded in a disposable NorviOS desktop with a demonstration account. [Recording sources and stills](docs/demos/README.md).
 
 
-XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop. Current releases support GNOME Shell 50; the development branch also supports GNOME Shell 51.
+XDock moves GNOME's dash out of the overview and onto the desktop, as a dock for launching apps and switching between windows without leaving what you are doing. It is a fork of [Dash to Dock](https://github.com/micheleg/dash-to-dock) by Michele Gaio and its contributors, and keeps its complete history. It is part of the [NorviOS](https://github.com/spencernorton/norvi-os) desktop. Releases support GNOME Shell 50 and 51.
 
 ## What it does
 

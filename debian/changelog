@@ -1,3 +1,13 @@
+gnome-shell-extension-xdock (2.3.0) resolute; urgency=medium
+
+  * Keep magnification smooth and running-app lights centered across the dock.
+  * Pace magnification with the display and reduce repeated layout work.
+  * Reduce idle launcher memory and unnecessary window-overlap tracking.
+  * Support GNOME Shell 51 and its reduced-motion preference.
+  * Expand native motion, input and clean-shutdown regression coverage.
+
+ -- Norvi <apt@globalentry.systems>  Wed, 11 Nov 2026 17:40:00 +0000
+
 gnome-shell-extension-xdock (2.2.0) resolute; urgency=medium
 
   * Keep magnified dock icons sharp with full-resolution textures.
