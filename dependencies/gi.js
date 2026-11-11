@@ -4,6 +4,7 @@ export {default as Clutter} from 'gi://Clutter';
 export {default as Cogl} from 'gi://Cogl';
 export {default as GLib} from 'gi://GLib';
 export {default as GObject} from 'gi://GObject';
+export {default as Graphene} from 'gi://Graphene';
 export {default as GdkPixbuf} from 'gi://GdkPixbuf';
 export {default as Gio} from 'gi://Gio';
 export {default as GioUnix} from 'gi://GioUnix';

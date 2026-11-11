@@ -777,7 +777,6 @@ export const DockDash = GObject.registerClass({
         if (!items.length || !this._box.get_stage())
             return null;
 
-        const [stageX, stageY] = this._box.get_transformed_position();
         const centers = items.map(item => {
             const box = item.get_allocation_box();
             return this._isHorizontal
@@ -794,6 +793,9 @@ export const DockDash = GObject.registerClass({
             return null;
 
         const [boxW, boxH] = this._box.get_transformed_size();
+        // Allocation getters may finish a pending layout. Read the stage
+        // origin afterwards so all parts of the snapshot use that layout.
+        const [stageX, stageY] = this._box.get_transformed_position();
         const {settings} = Docking.DockManager;
         const acrossOverflow = pitch * Math.max(0, settings.magnifyMaxScale - 1);
         return {

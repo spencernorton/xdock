@@ -152,6 +152,67 @@ export async function run() {
             'hover must reuse the prepared source actors and textures');
         result.textureReuse = 'pass';
 
+        // Resetting a magnified row queues its narrower allocation. A new
+        // pointer sample must capture that row's current origin along with
+        // its new item centers, before the next animation frame.
+        dash._resetMagnify();
+        dash._magnifyOnPointer();
+        check(dash._magnifyRest, 'stationary hover must capture the reset row');
+        const resetOrigin = dash._box.get_transformed_position()[0];
+        check(Math.abs(dash._magnifyRest.axisStart - resetOrigin) <= 1,
+            `rest capture must use the allocated row origin: ${dash._magnifyRest.axisStart} vs ${resetOrigin}`);
+        await wait(800);
+        check(binScale(icons[2]) > 1.45, 'stationary hover must recover after the row resets');
+        result.resetCapture = 'pass';
+
+        // Follow the actual painted clone during pointer movement. Its
+        // bottom-center pivot must coincide with the source bin's anchor
+        // on every frame, including a layer with a pending allocation.
+        let anchorSamples = 0;
+        let anchorError = 0;
+        const alignmentId = global.stage.connect('after-paint', () => {
+            for (const icon of dash.getAppIcons()) {
+                const bin = icon.icon._iconBin;
+                const clone = icon._floatClone;
+                if (!icon._floatLayer?.visible || !clone?.mapped || !bin.has_allocation())
+                    continue;
+                // Position reads preserve cached painted geometry. A size
+                // read could force layout and conceal a stale visible copy.
+                const [cloneX, cloneY] = clone.get_transformed_position();
+                const [sourceX, sourceY] = bin.get_transformed_position();
+                const box = bin.get_allocation_box();
+                const width = box.get_width();
+                const height = box.get_height();
+                anchorError = Math.max(anchorError,
+                    Math.abs(cloneX + width * clone.scale_x / 2 - sourceX - width / 2),
+                    Math.abs(cloneY + height * clone.scale_y - sourceY - height));
+                anchorSamples++;
+            }
+        });
+        try {
+            move(100, 100);
+            await wait(500);
+            const [left, sweepY] = center(icons[0]);
+            const [right] = center(icons.at(-1));
+            for (const [start, end] of [[left, right], [right, left]]) {
+                move(start, sweepY);
+                // eslint-disable-next-line no-await-in-loop -- ordered native input
+                await wait(400);
+                for (let step = 1; step <= 80; step++) {
+                    move(start + (end - start) * step / 80, sweepY);
+                    // eslint-disable-next-line no-await-in-loop -- ordered native input
+                    await wait(15);
+                }
+            }
+        } finally {
+            global.stage.disconnect(alignmentId);
+        }
+        check(anchorSamples >= 30, 'pointer sweeps must paint enough floating icons to check alignment');
+        check(anchorError <= 0.25, `painted clone anchors must follow the current row: ${anchorError}px`);
+        result.sweepAnchorError = Math.round(anchorError * 1000) / 1000;
+        move(px, py);
+        await wait(800);
+
         // The painted clone extends past the icon's input surface. Moving
         // onto the overflow should hold the magnification without moving
         // the reactive icon or making the clone intercept pointer events.
