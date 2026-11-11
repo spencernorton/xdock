@@ -253,17 +253,41 @@ class RunningIndicatorDefault extends RunningIndicatorBase {
 
 const IndicatorDrawingArea = GObject.registerClass(
 class IndicatorDrawingArea extends St.DrawingArea {
+    _init(source, side) {
+        super._init({x_expand: true, y_expand: true});
+        this._source = source;
+        this._horizontal = side === St.Side.TOP || side === St.Side.BOTTOM;
+    }
+
     vfunc_allocate(box) {
-        if (box.x1 !== 0 || box.y1 !== 0)
-            return super.vfunc_allocate(box);
-
-        // We assume that the are is a rectangle in the operations below:
+        // Keep the square canvas centered when magnification widens or
+        // lengthens the icon slot. Its light must stay beneath the icon.
         const size = Math.min(box.get_width(), box.get_height());
-        box.x2 = size;
-        box.y2 = size;
-        this.set_allocation(box);
+        box.x1 += (box.get_width() - size) / 2;
+        box.y1 += (box.get_height() - size) / 2;
+        box.x2 = box.x1 + size;
+        box.y2 = box.y1 + size;
 
-        return super.vfunc_allocate(box);
+        super.vfunc_allocate(box);
+
+        const bin = this._source.icon?._iconBin;
+        if (!bin?.has_allocation())
+            return;
+        const icon = bin.get_transformed_extents();
+        const area = this.get_transformed_extents();
+        // Convert the correction to local coordinates: app insertion and
+        // removal also scale the shared parent during their animation.
+        const parent = this.get_parent();
+        const [iconValid, iconX, iconY] = parent.transform_stage_point(
+            icon.origin.x + icon.size.width / 2, icon.origin.y + icon.size.height / 2);
+        const [areaValid, areaX, areaY] = parent.transform_stage_point(
+            area.origin.x + area.size.width / 2, area.origin.y + area.size.height / 2);
+        if (!iconValid || !areaValid)
+            return;
+        if (this._horizontal)
+            this.translation_x += iconX - areaX;
+        else
+            this.translation_y += iconY - areaY;
     }
 });
 
@@ -273,10 +297,7 @@ class RunningIndicatorDots extends RunningIndicatorBase {
 
         this._hideDefaultDot();
 
-        this._area = new IndicatorDrawingArea({
-            x_expand: true,
-            y_expand: true,
-        });
+        this._area = new IndicatorDrawingArea(source, this._side);
 
         // We draw for the bottom case and rotate the canvas for other placements
         // set center of rotations to the center

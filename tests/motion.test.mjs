@@ -15,6 +15,7 @@ import {
     planIconMotion,
     planMagnification,
     planMagnifyApproach,
+    planMagnifyOffsets,
     planIndicatorTransition
 } from '../motion.js';
 
@@ -29,6 +30,23 @@ function equal(actual, expected, message) {
 function deepEqual(actual, expected, message) {
     assert.deepEqual(actual, expected, message);
     assertions++;
+}
+
+function near(actual, expected, message) {
+    assert.ok(Math.abs(actual - expected) < 1e-9,
+        `${message}: expected ${expected}, got ${actual}`);
+    assertions++;
+}
+
+// Project each scaled slot onto the dock axis, as the painted row does.
+// Keeping the spaces between these intervals preserves picking and layout.
+function paintedRow(centers, sizes, scales, order, anchor) {
+    const offsets = planMagnifyOffsets(sizes, scales, order, anchor);
+    return order.map(index => {
+        const center = centers[index] + offsets[index];
+        const halfSize = sizes[index] * scales[index] / 2;
+        return {center, start: center - halfSize, end: center + halfSize};
+    });
 }
 
 class FakeClock {
@@ -614,6 +632,84 @@ equal(hiding.completedState, DockMotionState.HIDDEN);
             (bad.centers ?? centers).map(() => 1), `bad input ${JSON.stringify(bad)}`);
         assertions++;
     }
+}
+
+{
+    // Unequal slots occupy [0, 248] with three 8 px gaps. The caller's
+    // available row budget leaves exactly 20 px for magnification.
+    const centers = [16, 80, 152, 216];
+    const sizes = [32, 80, 48, 64];
+    const order = [0, 1, 2, 3];
+    const base = {
+        centers, sizes, itemSize: 64, pointer: 80, maxScale: 1.9, rangeFactor: 3,
+        restTotal: 248,
+    };
+    const uncapped = paintedRow(centers, sizes, planMagnification(base), order, 0.5);
+    assert.ok(uncapped.at(-1).end - uncapped[0].start > 268,
+        'this row needs to be capped to fit the available space');
+    assertions++;
+
+    const scales = planMagnification({...base, maxTotal: 268});
+    const row = paintedRow(centers, sizes, scales, order, 0.5);
+    near(row[0].start, -10, 'a centered capped row uses half the headroom on the left');
+    near(row.at(-1).end, 258, 'a centered capped row uses half the headroom on the right');
+    near(row.at(-1).end - row[0].start, 268, 'unequal slots consume the exact row budget');
+    for (let i = 1; i < row.length; i++)
+        near(row[i].start - row[i - 1].end, 8, 'capping preserves the resting slot gaps');
+}
+
+{
+    // These widths gain 78 px in total. Centered, start-aligned and
+    // end-aligned docks each retain their intended anchor as the row grows.
+    const centers = [16, 80, 152, 216];
+    const sizes = [32, 80, 48, 64];
+    const scales = [1.25, 1.4, 1.125, 1.5];
+    for (const [anchor, start, end] of [[0.5, -39, 287], [0, 0, 326], [1, -78, 248]]) {
+        const row = paintedRow(centers, sizes, scales, [0, 1, 2, 3], anchor);
+        near(row[0].start, start, `anchor ${anchor} keeps the expected start edge`);
+        near(row.at(-1).end, end, `anchor ${anchor} keeps the expected end edge`);
+        near(row.at(-1).end - row[0].start, 326, 'anchor choice preserves the total row extent');
+        for (let i = 1; i < row.length; i++)
+            near(row[i].start - row[i - 1].end, 8, 'anchor choice preserves every gap');
+
+        // RTL changes actor indexing, while physical order still runs
+        // from the low coordinate to the high coordinate on screen.
+        const rtl = paintedRow(centers.toReversed(), sizes.toReversed(), scales.toReversed(),
+            [3, 2, 1, 0], anchor);
+        for (let i = 0; i < row.length; i++) {
+            near(rtl[i].start, row[i].start, 'RTL slots keep the same physical start');
+            near(rtl[i].end, row[i].end, 'RTL slots keep the same physical end');
+        }
+    }
+}
+
+{
+    // Transfer 30 px of growth from one icon to its neighbor without
+    // changing the outer row bounds. Each frame moves them less than a
+    // pixel, so integer rounding or a stale offset produces a visible jump.
+    const centers = [30, 98, 166];
+    const sizes = [60, 60, 60];
+    const order = [0, 1, 2];
+    let previous = paintedRow(centers, sizes, [1.5, 1, 1], order, 0.5);
+    for (let frame = 1; frame <= 100; frame++) {
+        const transfer = frame / 100;
+        const scales = [1.5 - transfer / 2, 1 + transfer / 2, 1];
+        const row = paintedRow(centers, sizes, scales, order, 0.5);
+        near(row[0].start, -15, 'growth transfer holds the left edge');
+        near(row.at(-1).end, 211, 'growth transfer holds the right edge');
+        near(row[1].start - row[0].end, 8, 'growth transfer preserves the first gap');
+        near(row[2].start - row[1].end, 8, 'growth transfer preserves the second gap');
+        near(row[2].center, previous[2].center, 'the far slot stays still during transfer');
+        for (const index of [0, 1]) {
+            const movement = previous[index].center - row[index].center;
+            assert.ok(movement > 0 && movement < 0.2,
+                `frame ${frame}, slot ${index} must move smoothly by a fraction of a pixel, got ${movement}`);
+            assertions++;
+        }
+        previous = row;
+    }
+    near(previous[0].center, 15, 'the first icon completes its continuous shift');
+    near(previous[1].center, 98, 'the next icon completes its continuous shift');
 }
 
 {

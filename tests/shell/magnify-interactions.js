@@ -18,6 +18,129 @@ const check = (condition, message) => {
         throw new Error(message);
 };
 
+async function checkRenderedRow(dash, settings, icons, move, center) {
+    const indicatorIcon = icons[2];
+    const savedStyle = settings.get_enum('running-indicator-style');
+    const savedRunning = indicatorIcon.running;
+    const savedCount = indicatorIcon.windowsCount;
+    let signal = 0;
+    let samples = 0;
+    let dotSamples = 0;
+    let modelError = 0;
+    let anchorError = 0;
+    let dotError = 0;
+    let clipped = 0;
+    try {
+        settings.set_enum('running-indicator-style', 9); // Single running dot.
+        indicatorIcon.windowsCount = 1;
+        indicatorIcon.running = true;
+        move(100, 100);
+        await wait(500);
+        const baseline = dash._box.get_children().filter(item => item.setMagnifyScale && item.visible)
+            .map(item => ({
+                item,
+                width: item.get_allocation_box().get_width(),
+                center: center(item.child.icon?._iconBin ?? item.child)[0],
+            })).sort((a, b) => a.center - b.center);
+
+        signal = global.stage.connect('after-paint', () => {
+            const rest = dash._magnifyRest;
+            const scales = baseline.map(entry => rest?.scales[rest.items.indexOf(entry.item)]);
+            if (!scales.every(Number.isFinite))
+                return;
+            // Derive the row from measured resting widths and current scales,
+            // independently of BoxLayout allocations and floating-copy positions.
+            const growth = baseline.map((entry, i) => entry.width * (scales[i] - 1));
+            let offset = -growth.reduce((sum, value) => sum + value, 0) / 2;
+            const [viewX] = dash._scrollView.get_transformed_position();
+            const viewRight = viewX + dash._scrollView.get_allocation_box().get_width();
+            baseline.forEach((entry, i) => {
+                const expected = entry.center + offset + growth[i] / 2;
+                offset += growth[i];
+                const icon = entry.item.child;
+                const bin = icon.icon?._iconBin ?? icon;
+                if (!bin.has_allocation())
+                    return;
+                const box = bin.get_allocation_box();
+                const [sourceX, sourceY] = bin.get_transformed_position();
+                const floating = icon._floatLayer?.visible && icon._floatClone?.mapped;
+                const clone = icon._floatClone;
+                // Cached position reads preserve painted geometry. Transformed
+                // size reads could force layout and conceal the stepped row.
+                const [x, y] = floating ? clone.get_transformed_position() : [sourceX, sourceY];
+                const scale = floating ? clone.scale_x : 1;
+                const width = box.get_width() * scale;
+                const actual = x + width / 2;
+                modelError = Math.max(modelError, Math.abs(actual - expected));
+                if (floating) {
+                    anchorError = Math.max(anchorError,
+                        Math.abs(actual - sourceX - box.get_width() / 2),
+                        Math.abs(y + box.get_height() * clone.scale_y - sourceY - box.get_height()));
+                } else {
+                    clipped = Math.max(clipped, viewX - x, x + width - viewRight);
+                }
+                if (icon === indicatorIcon) {
+                    const area = icon._indicator._indicators.find(indicator => indicator._area)?._area;
+                    if (area?.visible && area.has_allocation()) {
+                        const [dotX] = area.get_transformed_position();
+                        dotError = Math.max(dotError,
+                            Math.abs(dotX + area.get_allocation_box().get_width() / 2 - actual));
+                        dotSamples++;
+                    }
+                }
+                samples++;
+            });
+        });
+        const [left, y] = center(icons[0]);
+        const [right] = center(icons.at(-1));
+        let rebased = false;
+        for (const [start, end] of [[left, right], [right, left]]) {
+            move(start, y);
+            // eslint-disable-next-line no-await-in-loop -- ordered native input
+            await wait(400);
+            for (let step = 1; step <= 80; step++) {
+                move(start + (end - start) * step / 80, y);
+                if (!rebased && step === 40) {
+                    dash.invalidateMagnifyGeometry();
+                    rebased = true;
+                }
+                // eslint-disable-next-line no-await-in-loop -- ordered native input
+                await wait(15);
+            }
+        }
+        check(samples >= 30 && dotSamples >= 10, 'sweeps must paint the row and running indicator');
+        check(modelError <= 0.25, `painted row must follow continuous widths: ${modelError}px`);
+        check(anchorError <= 0.25, `painted clones must follow the row: ${anchorError}px`);
+        check(dotError <= 0.02, `running dot must follow the painted icon center: ${dotError}px`);
+        check(clipped <= 0.25, `resting icons must remain inside the viewport: ${clipped}px`);
+
+        move(100, 100);
+        dash.invalidateMagnifyGeometry();
+        for (let attempt = 0; attempt < 100 && (dash._magnifyRebasing ||
+            dash._magnifyLayoutId || dash._magnifyTimeline?.is_playing()); attempt++) {
+            // eslint-disable-next-line no-await-in-loop -- wait for semantic rebase completion
+            await wait(50);
+        }
+        check(!dash._magnifyRebasing && !dash._magnifyLayoutId && !dash._magnifyTimeline?.is_playing(),
+            'leaving the dock must finish the geometry rebase');
+        check(dash._box.get_children().every(item => item.translation_x === 0 && item.translation_y === 0),
+            'a completed rebase must clear item translations');
+        return {
+            sweepAnchorError: Math.round(anchorError * 1000) / 1000,
+            sweepModelError: Math.round(modelError * 1000) / 1000,
+            runningDotError: Math.round(dotError * 1000) / 1000,
+            unclippedIcons: 'pass',
+            rebaseReset: 'pass',
+        };
+    } finally {
+        if (signal)
+            global.stage.disconnect(signal);
+        indicatorIcon.windowsCount = savedCount;
+        indicatorIcon.running = savedRunning;
+        settings.set_enum('running-indicator-style', savedStyle);
+    }
+}
+
 export async function run() {
     check(GLib.getenv('GNOME_SHELL_DEV_HARNESS') === '1', 'private test session required');
     const extension = Main.extensionManager.lookup('xdock@spencercnorton.github.io');
@@ -165,51 +288,7 @@ export async function run() {
         check(binScale(icons[2]) > 1.45, 'stationary hover must recover after the row resets');
         result.resetCapture = 'pass';
 
-        // Follow the actual painted clone during pointer movement. Its
-        // bottom-center pivot must coincide with the source bin's anchor
-        // on every frame, including a layer with a pending allocation.
-        let anchorSamples = 0;
-        let anchorError = 0;
-        const alignmentId = global.stage.connect('after-paint', () => {
-            for (const icon of dash.getAppIcons()) {
-                const bin = icon.icon._iconBin;
-                const clone = icon._floatClone;
-                if (!icon._floatLayer?.visible || !clone?.mapped || !bin.has_allocation())
-                    continue;
-                // Position reads preserve cached painted geometry. A size
-                // read could force layout and conceal a stale visible copy.
-                const [cloneX, cloneY] = clone.get_transformed_position();
-                const [sourceX, sourceY] = bin.get_transformed_position();
-                const box = bin.get_allocation_box();
-                const width = box.get_width();
-                const height = box.get_height();
-                anchorError = Math.max(anchorError,
-                    Math.abs(cloneX + width * clone.scale_x / 2 - sourceX - width / 2),
-                    Math.abs(cloneY + height * clone.scale_y - sourceY - height));
-                anchorSamples++;
-            }
-        });
-        try {
-            move(100, 100);
-            await wait(500);
-            const [left, sweepY] = center(icons[0]);
-            const [right] = center(icons.at(-1));
-            for (const [start, end] of [[left, right], [right, left]]) {
-                move(start, sweepY);
-                // eslint-disable-next-line no-await-in-loop -- ordered native input
-                await wait(400);
-                for (let step = 1; step <= 80; step++) {
-                    move(start + (end - start) * step / 80, sweepY);
-                    // eslint-disable-next-line no-await-in-loop -- ordered native input
-                    await wait(15);
-                }
-            }
-        } finally {
-            global.stage.disconnect(alignmentId);
-        }
-        check(anchorSamples >= 30, 'pointer sweeps must paint enough floating icons to check alignment');
-        check(anchorError <= 0.25, `painted clone anchors must follow the current row: ${anchorError}px`);
-        result.sweepAnchorError = Math.round(anchorError * 1000) / 1000;
+        Object.assign(result, await checkRenderedRow(dash, settings, icons, move, center));
         move(px, py);
         await wait(800);
 

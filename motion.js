@@ -68,6 +68,7 @@ export function planIconMotion({hovered = false, pressed = false} = {}) {
  * @param {object} params magnification inputs, all in resting box pixels
  * @param {number[]} params.centers resting centre of each icon along the axis
  * @param {number} params.itemSize resting size of one icon along the axis
+ * @param {number[]} [params.sizes] individual item sizes for the growth budget
  * @param {number} params.pointer pointer position along the axis
  * @param {number} params.influence eased presence of the pointer, 0..1
  * @param {number} params.maxScale scale of the icon under the pointer
@@ -80,6 +81,7 @@ export function planIconMotion({hovered = false, pressed = false} = {}) {
 export function planMagnification({
     centers = [],
     itemSize,
+    sizes,
     pointer,
     influence = 1,
     maxScale,
@@ -105,7 +107,8 @@ export function planMagnification({
         const distance = Number.isFinite(center) ? Math.abs(pointer - center) / reach : Infinity;
         const extra = distance < 1 ? peak * Math.cos(distance * Math.PI / 2) ** 2 : 0;
         scales[i] = 1 + extra;
-        growth += extra * itemSize;
+        const size = sizes?.[i];
+        growth += extra * (Number.isFinite(size) && size > 0 ? size : itemSize);
     }
 
     const headroom = maxTotal - restTotal;
@@ -139,6 +142,33 @@ export function planMagnifyApproach(current, target, durationMs, dtMs, epsilon =
 
     const next = current + (target - current) * (1 - Math.exp(-3 * dtMs / durationMs));
     return Math.abs(target - next) <= epsilon ? target : next;
+}
+
+/**
+ * Continuous shifts from resting icon centers. The visual order follows the
+ * physical axis, including RTL rows. Anchor 0 holds the start edge, 1 holds
+ * the end edge, and 0.5 keeps the row centered as it grows.
+ *
+ * @param {number[]} sizes resting item widths or heights
+ * @param {number[]} scales current magnification scales
+ * @param {number[]} order item indices in physical-axis order
+ * @param {number} anchor fixed point within the row, from 0 to 1
+ * @param {number[]} offsets reusable result
+ * @returns {number[]} shifts along the dock axis
+ */
+export function planMagnifyOffsets(sizes, scales, order, anchor, offsets = []) {
+    offsets.length = sizes.length;
+    let growth = 0;
+    for (let i = 0; i < sizes.length; i++)
+        growth += sizes[i] * (scales[i] - 1);
+
+    let position = -growth * anchor;
+    for (const i of order) {
+        const extra = sizes[i] * (scales[i] - 1);
+        offsets[i] = position + extra / 2;
+        position += extra;
+    }
+    return offsets;
 }
 
 export const IndicatorTransition = Object.freeze({

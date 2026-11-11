@@ -84,6 +84,20 @@ class DockDashItemContainer extends Dash.DashItemContainer {
         this.queue_relayout();
     }
 
+    getMagnifyAxisCenter() {
+        const actor = this.child?.icon?._iconBin ?? this;
+        const [x, y] = actor.get_transformed_position();
+        const [width, height] = actor.get_transformed_size();
+        return this._magnifyHorizontal ? x + width / 2 : y + height / 2;
+    }
+
+    setMagnifyTranslation(value) {
+        if (this._magnifyHorizontal)
+            this.translation_x = value;
+        else
+            this.translation_y = value;
+    }
+
     vfunc_get_preferred_width(forHeight) {
         const [min, nat] = super.vfunc_get_preferred_width(forHeight);
         return this._magnifyHorizontal && this._magnifyScale !== 1
@@ -131,6 +145,14 @@ class DockDashItemContainer extends Dash.DashItemContainer {
                 this.set_hover(true);
             },
         });
+    }
+});
+
+const DockDashIconsBox = GObject.registerClass(
+class DockDashIconsBox extends St.BoxLayout {
+    vfunc_allocate(box) {
+        super.vfunc_allocate(box);
+        this._delegate?._syncMagnifyLayout();
     }
 });
 
@@ -260,7 +282,7 @@ export const DockDash = GObject.registerClass({
         this._boxContainer.add_style_class_name(Theming.PositionStyleClass[this._position]);
 
         const rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
-        this._box = new St.BoxLayout({
+        this._box = new DockDashIconsBox({
             orientation,
             clip_to_allocation: false,
             ...!this._isHorizontal ? {layout_manager: new DockDashIconsVerticalLayout()} : {},
@@ -365,11 +387,25 @@ export const DockDash = GObject.registerClass({
         this.connect('destroy', this._onDestroy.bind(this));
 
         this._signalsHandler.add(Docking.DockManager.settings, 'changed::magnify-icons',
-            () => this._syncMagnify());
+            () => {
+                this._syncMagnify();
+                this._queueRedisplay();
+            });
         this._signalsHandler.add(Docking.DockManager.settings, 'changed::icon-size-fixed',
-            () => this._syncMagnify());
+            () => {
+                this._syncMagnify();
+                this._queueRedisplay();
+            });
         this._signalsHandler.add(Docking.DockManager.settings, 'changed::magnify-max-scale',
-            () => this._resetMagnify());
+            () => {
+                this._resetMagnify();
+                this._queueRedisplay();
+            });
+        this._signalsHandler.add(Docking.DockManager.settings, 'changed::magnify-range-factor',
+            () => {
+                this._rebaseMagnify();
+                this._queueRedisplay();
+            });
         this.connect('notify::mapped', () => this._syncMagnify());
         this.connect('menu-opened', () => {
             this._magnifyFreezes.add('menu');
@@ -619,8 +655,9 @@ export const DockDash = GObject.registerClass({
         this._magnifyPointer = null;
         this._magnifyStageX = NaN;
         this._magnifyStageY = NaN;
-        if (wasActive) {
-            for (const child of this._box.get_children())
+        for (const child of this._box.get_children()) {
+            child.setMagnifyTranslation?.(0);
+            if (wasActive)
                 child.setMagnifyScale?.(1);
         }
     }
@@ -648,6 +685,9 @@ export const DockDash = GObject.registerClass({
         // for layout and sample the pointer even if it hasn't moved.
         this._magnifyLayoutId = global.stage.connect('after-paint', () => {
             if (!this._box.has_allocation() ||
+                (this._showAppsIcon.visible &&
+                    (this._showAppsIcon.get_transition('scale-x') ||
+                     this._showAppsIcon.get_transition('scale-y'))) ||
                 this._box.get_children().some(child => child.visible && child.setMagnifyScale &&
                     (!child.has_allocation() || child.animatingOut ||
                      child.get_transition('scale-x') || child.get_transition('scale-y'))))
@@ -679,7 +719,8 @@ export const DockDash = GObject.registerClass({
 
         if (this._magnifyInfluence === 0 && !this._magnifyTimeline?.is_playing()) {
             this._magnifyRest ??= this._captureMagnifyRest();
-            if (!this._magnifyRest || this._magnifyLimit <= this._magnifyRest.total ||
+            if (!this._magnifyRest ||
+                this._magnifyLimit - this._magnifyRest.outside <= this._magnifyRest.total ||
                 !this._isMagnifyHit(x, y, this._magnifyRest))
                 return;
         }
@@ -736,6 +777,7 @@ export const DockDash = GObject.registerClass({
         const rebasing = this._magnifyRebasing;
         const inside = !rebasing && this._isMagnifyHit(x, y, rest);
 
+        const previousInfluence = this._magnifyInfluence;
         this._magnifyInfluence = Motion.planMagnifyApproach(
             this._magnifyInfluence, inside ? 1 : 0, duration, dtMs);
         if (inside) {
@@ -754,22 +796,61 @@ export const DockDash = GObject.registerClass({
         const scales = Motion.planMagnification({
             centers: rest.centers,
             itemSize: rest.pitch,
+            sizes: rest.sizes,
             pointer: this._magnifyPointer,
             influence: this._magnifyInfluence,
             maxScale: settings.magnifyMaxScale,
             rangeFactor: settings.magnifyRangeFactor,
-            maxTotal: this._magnifyLimit,
+            maxTotal: this._magnifyLimit - rest.outside,
             restTotal: rest.total,
         }, rest.scales);
         // Removed actors can still be in the snapshot during the fade.
         const liveItems = rebasing ? new Set(this._box.get_children()) : null;
         rest.items.forEach((item, i) => {
             const scale = scales[i];
-            if ((!liveItems || liveItems.has(item)) && (scale > 1 || item._magnifyScale !== 1))
+            if (liveItems && !liveItems.has(item))
+                return;
+            // If membership changed, the old row no longer has a shared
+            // center. Ease its remaining corrections away with the growth.
+            if (rebasing && previousInfluence > 0) {
+                const translation = this._isHorizontal ? item.translation_x : item.translation_y;
+                item.setMagnifyTranslation(translation * this._magnifyInfluence / previousInfluence);
+            }
+            if (scale > 1 || item._magnifyScale !== 1)
                 item.setMagnifyScale(scale);
         });
         return this._magnifyInfluence !== (inside ? 1 : 0) ||
             (inside && this._magnifyPointer !== axis - rest.axisStart);
+    }
+
+    _syncMagnifyLayout() {
+        const rest = this._magnifyRest;
+        if (!rest || this._magnifyInfluence === 0)
+            return;
+
+        let liveCount = 0;
+        for (const item of this._box.get_children()) {
+            if (!item.visible || !item.setMagnifyScale)
+                continue;
+            if (!rest.members.has(item))
+                return;
+            liveCount++;
+        }
+        if (liveCount !== rest.items.length)
+            return;
+
+        // BoxLayout rounds widths and each following position to whole
+        // pixels. Keep its input allocations, then correct the complete
+        // item to the continuous center, including the running indicator.
+        Motion.planMagnifyOffsets(rest.sizes, rest.scales, rest.order,
+            rest.anchor, rest.offsets);
+        for (const index of rest.order) {
+            const item = rest.items[index];
+            const target = rest.axisStart + rest.centers[index] + rest.offsets[index];
+            const current = item.getMagnifyAxisCenter();
+            const previous = this._isHorizontal ? item.translation_x : item.translation_y;
+            item.setMagnifyTranslation(previous + target - current);
+        }
     }
 
     _captureMagnifyRest() {
@@ -777,18 +858,17 @@ export const DockDash = GObject.registerClass({
         if (!items.length || !this._box.get_stage())
             return null;
 
-        const centers = items.map(item => {
-            const box = item.get_allocation_box();
-            return this._isHorizontal
-                ? (box.x1 + box.x2) / 2 : (box.y1 + box.y2) / 2;
-        });
-        const axisSize = item => {
-            const box = item.get_allocation_box();
+        const boxes = items.map(item => item.get_allocation_box());
+        const sizes = boxes.map(box => {
             return this._isHorizontal ? box.get_width() : box.get_height();
-        };
-        const pitch = centers.length > 1
-            ? Math.abs(centers.at(-1) - centers[0]) / (centers.length - 1)
-            : axisSize(items[0]);
+        });
+        const contentStart = Math.min(...boxes.map(box => this._isHorizontal ? box.x1 : box.y1));
+        const contentEnd = Math.max(...boxes.map(box => this._isHorizontal ? box.x2 : box.y2));
+        const total = contentEnd - contentStart;
+        const axisCenters = items.map(item => item.getMagnifyAxisCenter());
+        const pitch = axisCenters.length > 1
+            ? Math.abs(axisCenters.at(-1) - axisCenters[0]) / (axisCenters.length - 1)
+            : sizes[0];
         if (!(pitch > 0))
             return null;
 
@@ -797,14 +877,37 @@ export const DockDash = GObject.registerClass({
         // origin afterwards so all parts of the snapshot use that layout.
         const [stageX, stageY] = this._box.get_transformed_position();
         const {settings} = Docking.DockManager;
+        const axisStart = (this._isHorizontal ? stageX : stageY) + contentStart;
+        const centers = axisCenters.map(center => center - axisStart);
+        const order = centers.map((_center, index) => index)
+            .sort((a, b) => centers[a] - centers[b]);
+        const anchoredAtStart = settings.dockExtended && !settings.alwaysCenterIcons;
+        const rtl = this._isHorizontal &&
+            Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
+        // Bypass the extended dock's explicit size to measure the resting
+        // content, including Show Apps and the surrounding theme padding.
+        const layout = this._dashContainer.get_layout_manager();
+        const node = this._dashContainer.get_theme_node();
+        let [minimum, natural] = this._isHorizontal
+            ? layout.get_preferred_width(this._dashContainer, -1)
+            : layout.get_preferred_height(this._dashContainer, -1);
+        [minimum, natural] = this._isHorizontal
+            ? node.adjust_preferred_width(minimum, natural)
+            : node.adjust_preferred_height(minimum, natural);
         const acrossOverflow = pitch * Math.max(0, settings.magnifyMaxScale - 1);
         return {
             items,
+            members: new Set(items),
             centers,
+            sizes,
+            order,
+            anchor: anchoredAtStart ? Number(rtl) : 0.5,
+            offsets: new Array(items.length),
+            outside: Math.max(0, natural - total),
             scales: new Array(items.length),
             pitch,
-            total: this._isHorizontal ? boxW : boxH,
-            axisStart: this._isHorizontal ? stageX : stageY,
+            total,
+            axisStart,
             acrossStart: this._isHorizontal ? stageY : stageX,
             acrossSize: this._isHorizontal ? boxH : boxW,
             // A magnified icon overflows the dock towards the screen
@@ -951,7 +1054,9 @@ export const DockDash = GObject.registerClass({
         appIcon.icon.setIconSize(this.iconSize);
         this._hookUpLabel(item, appIcon);
 
-        item.connectObject('notify::allocation', () => appIcon.updateIconGeometry(), appIcon);
+        item.connectObject('notify::allocation', () => appIcon.updateIconGeometry(),
+            'notify::translation-x', () => appIcon.updateIconGeometry(),
+            'notify::translation-y', () => appIcon.updateIconGeometry(), appIcon);
 
         return item;
     }
@@ -1052,10 +1157,16 @@ export const DockDash = GObject.registerClass({
         firstIcon.ensure_style();
         const [, , iconWidth, iconHeight] = firstIcon.get_preferred_size();
         const [, , buttonWidth, buttonHeight] = firstButton.get_preferred_size();
+        const {settings} = Docking.DockManager;
+        const extraSlots = settings.magnifyIcons && !settings.iconSizeFixed
+            ? (settings.magnifyMaxScale - 1) *
+                Math.min(iconChildren.length - 1, Math.ceil(settings.magnifyRangeFactor))
+            : 0;
+        const effectiveCount = iconChildren.length + extraSlots;
 
         if (this._isHorizontal) {
             // Subtract icon padding and box spacing from the available width
-            availSpace -= iconChildren.length * (buttonWidth - iconWidth) +
+            availSpace -= effectiveCount * (buttonWidth - iconWidth) +
                            (iconChildren.length - 1) * spacing;
 
             if (this._separator) {
@@ -1064,7 +1175,7 @@ export const DockDash = GObject.registerClass({
             }
         } else {
             // Subtract icon padding and box spacing from the available height
-            availSpace -= iconChildren.length * (buttonHeight - iconHeight) +
+            availSpace -= effectiveCount * (buttonHeight - iconHeight) +
                            (iconChildren.length - 1) * spacing;
 
             if (this._separator) {
@@ -1073,7 +1184,7 @@ export const DockDash = GObject.registerClass({
             }
         }
 
-        const maxIconSize = availSpace / iconChildren.length;
+        const maxIconSize = availSpace / effectiveCount;
         const {scaleFactor} = St.ThemeContext.get_for_stage(global.stage);
         const iconSizes = this._availableIconSizes.map(s => s * scaleFactor);
 
@@ -1087,6 +1198,7 @@ export const DockDash = GObject.registerClass({
             return;
 
         const oldIconSize = this.iconSize;
+        this._rebaseMagnify();
         this.iconSize = newIconSize;
         this.emit('icon-size-changed');
 
@@ -1439,12 +1551,20 @@ export const DockDash = GObject.registerClass({
     }
 
     showShowAppsButton() {
+        if (!this._showAppsIcon.visible) {
+            this._rebaseMagnify();
+            this._queueRedisplay();
+        }
         this._showAppsIcon.visible = true;
         this._showAppsIcon.show(true);
         this.updateShowAppsButton();
     }
 
     hideShowAppsButton() {
+        if (this._showAppsIcon.visible) {
+            this._rebaseMagnify();
+            this._queueRedisplay();
+        }
         this._showAppsIcon.visible = false;
     }
 
@@ -1482,6 +1602,13 @@ export const DockDash = GObject.registerClass({
         const notifiedProperties = [];
         const showAppsContainer = settings.showAppsAlwaysInTheEdge || !settings.dockExtended
             ? this._dashContainer : this._boxContainer;
+        const parent = this._showAppsIcon.get_parent();
+        const edge = settings.showAppsAtTop
+            ? showAppsContainer.get_first_child() : showAppsContainer.get_last_child();
+        if (parent && (parent !== showAppsContainer || edge !== this._showAppsIcon)) {
+            this._rebaseMagnify();
+            this._queueRedisplay();
+        }
         const needsFirstLastChildWorkaround = Config.PACKAGE_VERSION.split('.')[0] < 49;
 
         if (needsFirstLastChildWorkaround) {
