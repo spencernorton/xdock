@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Capture magnification anchors from the same completed layout when the dock recenters.
+- Move floating icons with paint transforms so they can follow the dock within the current frame.
 - Add GNOME Shell 51 support and test native interactions on Shell 50 and 51.
 - Pace dock magnification with the display and react to pointer movement without polling.
 - Ease the dock through running-app changes and restore magnification under a stationary pointer.

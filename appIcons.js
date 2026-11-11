@@ -5,6 +5,7 @@ import {
     Gio,
     GLib,
     GObject,
+    Graphene,
     Meta,
     Mtk,
     Shell,
@@ -515,6 +516,18 @@ export const DockAbstractAppIcon = GObject.registerClass({
             const scale = this._magnifyScale * iconBin.scale_x;
             if (clone.scale_x !== scale)
                 clone.set_scale(scale, scale);
+            // A custom transform replaces the layer's normal translation.
+            // Include the launch bounce here so it still composes with the
+            // clone's magnification and attention animation.
+            const x = this._floatX + layer.translation_x;
+            const y = this._floatY + layer.translation_y;
+            if (this._floatRenderX !== x || this._floatRenderY !== y) {
+                this._floatRenderX = x;
+                this._floatRenderY = y;
+                const transform = new Graphene.Matrix();
+                transform.init_translate(new Graphene.Point3D({x, y, z: 0}));
+                layer.set_transform(transform);
+            }
         }
         if (floating || visibilityChanged)
             this.get_parent()?.syncLabelPosition?.();
@@ -528,11 +541,8 @@ export const DockAbstractAppIcon = GObject.registerClass({
         const [parentX, parentY] = iconBin.get_parent().get_transformed_position();
         const x = parentX + box.x1 + iconBin.translation_x;
         const y = parentY + box.y1 + iconBin.translation_y;
-        if (this._floatX !== x || this._floatY !== y) {
-            this._floatX = x;
-            this._floatY = y;
-            this._floatLayer.set_position(x, y);
-        }
+        this._floatX = x;
+        this._floatY = y;
     }
 
     _updateIconMotion() {
