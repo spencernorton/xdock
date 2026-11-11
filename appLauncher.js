@@ -48,6 +48,7 @@ import {
 import {DeferredTask} from './lifecycle.js';
 import {WholeSurfaceRedraw} from './dockBlur.js';
 import {animationsEnabled} from './animationSettings.js';
+import {refinePopupMotion} from './popupMenuMotion.js';
 
 import * as PopupMenuUtils from './popupMenuUtils.js';
 
@@ -1579,6 +1580,7 @@ export class AppGridLauncher {
         try {
             menu = new PopupMenu.PopupMenu(sourceButton, 0.5, arrowSide);
             menu.actor.add_style_class_name('xdock-app-grid-launcher');
+            refinePopupMotion(menu);
 
             const entry = new St.Entry({
                 style_class: 'xdock-app-grid-launcher-entry search-entry',

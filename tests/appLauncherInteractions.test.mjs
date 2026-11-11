@@ -52,6 +52,7 @@ for (const [path, replacement] of [
     ['./lifecycle.js', empty],
     ['./dockBlur.js', empty],
     ['./animationSettings.js', dataUrl('export const animationsEnabled = () => globalThis.launcherAnimationsEnabled ?? true;')],
+    ['./popupMenuMotion.js', dataUrl('export const refinePopupMotion = () => {};')],
     ['./imports.js', empty],
     ['./dependencies/shell/extensions/extension.js', empty],
     ['./popupMenuUtils.js', dataUrl('export const close = menu => { menu.isOpen = false; };')],
