@@ -2036,7 +2036,7 @@ export class DockManager {
         this._oldDash = Main.overview.isDummy ? null : Main.overview.dash;
         this._discreteGpuAvailable = AppDisplay.discreteGpuAvailable;
         this._appSpread = new AppSpread.AppSpread();
-        this._appLauncher = new AppLauncher.AppGridLauncher();
+        this._appLauncher = new AppLauncher.AppGridLauncher(this._settings);
         this._notificationsMonitor = new NotificationsMonitor.NotificationsMonitor();
 
         const needsRemoteModel = () =>

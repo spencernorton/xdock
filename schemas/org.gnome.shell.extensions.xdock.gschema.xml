@@ -349,6 +349,18 @@
       <summary>Action when the Show Applications button is clicked</summary>
       <description>'overview' opens the full-screen app grid; 'launcher' opens a small searchable app-grid popup.</description>
     </key>
+    <key type="i" name="launcher-columns">
+      <default>0</default>
+      <range min="0" max="64"/>
+      <summary>Application launcher width in columns</summary>
+      <description>Set by dragging an edge of the launcher popup. 0 uses the default width. The launcher never grows past its monitor.</description>
+    </key>
+    <key type="i" name="launcher-grid-height">
+      <default>0</default>
+      <range min="0" max="8192"/>
+      <summary>Application launcher results height</summary>
+      <description>Height of the launcher's results area in logical pixels, set by dragging an edge of the launcher popup. 0 uses the default height. The launcher never grows past its monitor.</description>
+    </key>
     <key type="b" name="bolt-support">
       <default>true</default>
       <summary>Basic compatibility with bolt extensions</summary>
