@@ -1897,6 +1897,16 @@ export class AppGridLauncher {
             // here, so the drag keeps following the pointer past its edge.
             this._menuSignalsHandler.add(menu.actor, 'captured-event',
                 (actor, event) => this._onResizeEvent(event));
+            // Shell 51's menu manager reads keys with a capture-phase
+            // controller, which runs before captured-event. This one is added
+            // before the manager's (which it re-adds on every open), so a drag
+            // claims Escape first: it cancels the drag, not the popup.
+            if (Clutter.KeyController && menu.actor.add_action_full) {
+                const resizeKeys = new Clutter.KeyController();
+                resizeKeys.connect('key-press', controller => this._onResizeKey(controller));
+                menu.actor.add_action_full('xdock-launcher-resize-keys',
+                    Clutter.EventPhase.CAPTURE, resizeKeys);
+            }
 
             // PopupMenuManager consumes Escape during event capture before a
             // focused entry/button sees it. Observe it first so the subsequent
@@ -2210,6 +2220,15 @@ export class AppGridLauncher {
             this._resetSize();
         else
             this._beginResize(edge, x, y);
+        return Clutter.EVENT_STOP;
+    }
+
+    _onResizeKey(controller) {
+        if (!this._resize)
+            return Clutter.EVENT_PROPAGATE;
+        const [, symbol] = controller.get_key();
+        if (symbol === Clutter.KEY_Escape)
+            this._cancelResize();
         return Clutter.EVENT_STOP;
     }
 
