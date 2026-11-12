@@ -295,6 +295,18 @@ const RESIZE_CURSORS = new Map([
     ['-1,1', 'SW_RESIZE'], ['0,1', 'S_RESIZE'], ['1,1', 'SE_RESIZE'],
 ]);
 
+// The desktop's double-click time and distance. Shell 51 (Mutter 19) removed
+// Clutter.Settings.get_default(); the stage's context owns the settings there,
+// and already does on Shell 50.
+function doubleClickSettings() {
+    const settings = global.stage.get_context?.()?.get_settings?.() ??
+        Clutter.Settings.get_default?.();
+    return {
+        doubleClickTime: settings?.double_click_time ?? 400,
+        doubleClickDistance: settings?.double_click_distance ?? 5,
+    };
+}
+
 export class AppGridLauncher {
     /**
      * @param {Gio.Settings} [settings] XDock's settings, which remember the
@@ -2189,10 +2201,10 @@ export class AppGridLauncher {
         // against the desktop's own double-click time and distance.
         const time = event.get_time();
         const last = this._lastRimPress;
-        const clutterSettings = Clutter.Settings.get_default();
+        const {doubleClickTime, doubleClickDistance} = doubleClickSettings();
         const doubleClick = last &&
-            time - last.time <= clutterSettings.double_click_time &&
-            Math.hypot(x - last.x, y - last.y) <= clutterSettings.double_click_distance;
+            time - last.time <= doubleClickTime &&
+            Math.hypot(x - last.x, y - last.y) <= doubleClickDistance;
         this._lastRimPress = doubleClick ? null : {time, x, y};
         if (doubleClick)
             this._resetSize();
