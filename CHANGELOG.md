@@ -4,6 +4,7 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Keep the hover label steady over a magnifying icon: it no longer bounces up and down or wobbles sideways, stays centred on the icon and sits on whole pixels.
 - Make the application launcher about half its former footprint while keeping readable text and normal-sized app icons.
 - Refine native popup easing and continue interrupted open/close animations from their current position.
 - Exercise launcher motion, reduced motion and scrolling in the native tests on both supported GNOME Shell versions.

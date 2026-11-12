@@ -30,6 +30,11 @@ async function checkRenderedRow(dash, settings, icons, move, center) {
     let anchorError = 0;
     let dotError = 0;
     let clipped = 0;
+    let labelSamples = 0;
+    let labelError = 0;
+    let labelGapMin = Infinity;
+    let labelGapMax = -Infinity;
+    let labelFraction = 0;
     try {
         settings.set_enum('running-indicator-style', 9); // Single running dot.
         indicatorIcon.windowsCount = 1;
@@ -79,6 +84,21 @@ async function checkRenderedRow(dash, settings, icons, move, center) {
                 } else {
                     clipped = Math.max(clipped, viewX - x, x + width - viewRight);
                 }
+                // The hover label rides on the painted icon: centred on it, a
+                // constant gap above its grown top edge, on whole pixels.
+                const label = entry.item.label;
+                if (label?.visible && label.opacity > 0 && label.has_allocation()) {
+                    const [labelX, labelY] = label.get_transformed_position();
+                    const labelBox = label.get_allocation_box();
+                    const gap = y - labelY - labelBox.get_height();
+                    labelError = Math.max(labelError,
+                        Math.abs(labelX + labelBox.get_width() / 2 - actual));
+                    labelGapMin = Math.min(labelGapMin, gap);
+                    labelGapMax = Math.max(labelGapMax, gap);
+                    labelFraction = Math.max(labelFraction,
+                        Math.abs(labelX - Math.round(labelX)), Math.abs(labelY - Math.round(labelY)));
+                    labelSamples++;
+                }
                 if (icon === indicatorIcon) {
                     const area = icon._indicator._indicators.find(indicator => indicator._area)?._area;
                     if (area?.visible && area.has_allocation()) {
@@ -108,11 +128,26 @@ async function checkRenderedRow(dash, settings, icons, move, center) {
                 await wait(15);
             }
         }
+        // Hop between neighbours with the label already up: each icon grows
+        // and settles under its label, which is where a label placed from a
+        // stale size bounced by its margin.
+        for (const index of [3, 2, 3, 2]) {
+            move(baseline[index].center, y);
+            // eslint-disable-next-line no-await-in-loop -- ordered native input
+            await wait(400);
+        }
         check(samples >= 30 && dotSamples >= 10, 'sweeps must paint the row and running indicator');
         check(modelError <= 0.25, `painted row must follow continuous widths: ${modelError}px`);
         check(anchorError <= 0.25, `painted clones must follow the row: ${anchorError}px`);
         check(dotError <= 0.02, `running dot must follow the painted icon center: ${dotError}px`);
         check(clipped <= 0.25, `resting icons must remain inside the viewport: ${clipped}px`);
+        // Rounding to whole pixels allows half a pixel either way; a label
+        // placed from a stale size or the rounded item bounces by more.
+        check(labelSamples >= 10, 'sweeps must paint the hover label');
+        check(labelFraction <= 0.01, `hover label must sit on whole pixels: ${labelFraction}px`);
+        check(labelError <= 0.51, `hover label must stay centred on the painted icon: ${labelError}px`);
+        check(labelGapMax - labelGapMin <= 1.01,
+            `hover label must keep its gap above the painted icon: ${labelGapMin}-${labelGapMax}px`);
 
         move(100, 100);
         dash.invalidateMagnifyGeometry();
@@ -129,6 +164,8 @@ async function checkRenderedRow(dash, settings, icons, move, center) {
             sweepAnchorError: Math.round(anchorError * 1000) / 1000,
             sweepModelError: Math.round(modelError * 1000) / 1000,
             runningDotError: Math.round(dotError * 1000) / 1000,
+            hoverLabelError: Math.round(labelError * 1000) / 1000,
+            hoverLabelGapRange: Math.round((labelGapMax - labelGapMin) * 1000) / 1000,
             unclippedIcons: 'pass',
             rebaseReset: 'pass',
         };

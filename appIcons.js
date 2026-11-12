@@ -1960,43 +1960,55 @@ export function itemPlaceLabel() {
     const itemWidth  = this.allocation.x2 - this.allocation.x1;
     const itemHeight = this.allocation.y2 - this.allocation.y1;
 
-    const labelWidth = this.label.get_width();
-    const labelHeight = this.label.get_height();
+    // Preferred sizes, which include the label's CSS margins. get_width()
+    // and get_height() return the allocation once the label is laid out but
+    // the preferred size while a relayout is pending, and set_position()
+    // queues one. Magnification places the label several times a frame, so
+    // the two answers alternated and the label bounced by its margin.
+    const [, labelWidth] = this.label.get_preferred_width(-1);
+    const [, labelHeight] = this.label.get_preferred_height(-1);
 
-    let x, y, xOffset, yOffset;
+    // Along the dock, centre on the icon, placed exactly as its floating copy
+    // is (see _syncFloatPosition). The box layout rounds this item's width,
+    // so the item's own centre wanders up to a pixel from the painted icon's
+    // as the row magnifies.
+    // Show Apps has no icon bin; it is centred on its item as before.
+    const iconBin = this.child?.icon?._iconBin;
+    let centerX = stageX + itemWidth / 2;
+    let centerY = stageY + itemHeight / 2;
+    if (iconBin?.has_allocation()) {
+        const binBox = iconBin.get_allocation_box();
+        const [binX, binY] = iconBin.get_parent().get_transformed_position();
+        centerX = binX + binBox.x1 + iconBin.translation_x + binBox.get_width() / 2;
+        centerY = binY + binBox.y1 + iconBin.translation_y + binBox.get_height() / 2;
+    }
+
+    let x, y;
 
     const position = Utils.getPosition();
     const labelOffset = node.get_length('-x-offset');
 
     switch (position) {
     case St.Side.LEFT:
-        yOffset = Math.floor((itemHeight - labelHeight) / 2);
-        y = stageY + yOffset;
-        xOffset = labelOffset;
-        x = stageX + this.get_width() + xOffset;
+        y = centerY - labelHeight / 2;
+        x = stageX + itemWidth + labelOffset;
         break;
     case St.Side.RIGHT:
-        yOffset = Math.floor((itemHeight - labelHeight) / 2);
-        y = stageY + yOffset;
-        xOffset = labelOffset;
-        x = Math.round(stageX) - labelWidth - xOffset;
+        y = centerY - labelHeight / 2;
+        x = stageX - labelWidth - labelOffset;
         break;
     case St.Side.TOP:
         y = stageY + labelOffset + itemHeight;
-        xOffset = Math.floor((itemWidth - labelWidth) / 2);
-        x = stageX + xOffset;
+        x = centerX - labelWidth / 2;
         break;
     case St.Side.BOTTOM:
-        yOffset = labelOffset;
-        y = stageY - labelHeight - yOffset;
-        xOffset = Math.floor((itemWidth - labelWidth) / 2);
-        x = stageX + xOffset;
+        y = stageY - labelHeight - labelOffset;
+        x = centerX - labelWidth / 2;
         break;
     }
 
     // The item is laid out at rest height across the dock; a magnified icon
     // grows past it towards the screen interior by its extra scale.
-    const iconBin = this.child?.icon?._iconBin;
     const grow = (this.child?._magnifyScale ?? 1) - 1;
     if (iconBin && grow > 0) {
         if (position === St.Side.BOTTOM)
@@ -2020,6 +2032,9 @@ export function itemPlaceLabel() {
     else if (x + labelWidth > monitor.x + monitor.width - gap)
         x -= x + labelWidth - (monitor.x + monitor.width) + gap;
 
-    return [x, y];
+    // Whole pixels keep the text sharp. Rounding a path that moves steadily
+    // gives a path that moves steadily, so the label still never steps
+    // against its icon.
+    return [Math.round(x), Math.round(y)];
     /* eslint-enable no-invalid-this */
 }
