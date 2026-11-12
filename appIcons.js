@@ -1784,6 +1784,7 @@ export const DockShowAppsIcon = GObject.registerClass({
             this._removeMenuTimeout(...args);
 
         Utils.deferActorDestroy(this.label);
+        trackItemDestroyed(this);
         this.label?.add_style_class_name(Theming.PositionStyleClass[position]);
         if (Docking.DockManager.settings.customThemeShrink)
             this.label?.add_style_class_name('shrink');
@@ -1922,13 +1923,29 @@ class DockShowAppsIconMenu extends DockAppIconMenu {
 }
 
 /**
+ * Mark an item destroyed, for code that can still reach it afterwards.
+ *
+ * Its label is destroyed in an idle (Utils.deferActorDestroy), so the label
+ * stays on stage after the item is gone, and Shell's dash can still fire a
+ * pending show-label timeout at the destroyed item. Touching the item then is
+ * a critical, which ends a session running with fatal criticals.
+ *
+ * @param {Clutter.Actor} item a DockShowAppsIcon or DockDashItemContainer
+ */
+export function trackItemDestroyed(item) {
+    item._itemDestroyed = false;
+    item.connect('destroy', () => (item._itemDestroyed = true));
+}
+
+/**
  * This function is used for both DockShowAppsIcon and DockDashItemContainer
  */
 export function itemShowLabel() {
     /* eslint-disable no-invalid-this */
     // Check if the label is still present at all. When switching workspace, the
-    // item might have been destroyed in between.
-    if (!this._labelText || !this.label.get_stage())
+    // item might have been destroyed in between. The label alone cannot tell:
+    // it outlives its item until an idle (see trackItemDestroyed).
+    if (this._itemDestroyed || !this._labelText || !this.label?.get_stage())
         return;
 
     this.label.set_text(this._labelText);
