@@ -784,6 +784,49 @@ export const DockAbstractAppIcon = GObject.registerClass({
             _('%s is updating, try again later').format(this.name), null);
     }
 
+    // How far the magnified copy reaches past this icon towards the screen
+    // interior, where its menus open. The dock holds magnification while a
+    // menu is open (dash.js), so this is where the icon stays.
+    _magnifiedClearance() {
+        const clone = this._floatClone;
+        if (!this._floatLayer?.visible || !clone?.has_allocation())
+            return 0;
+        const [x, y] = clone.get_transformed_position();
+        const box = clone.get_allocation_box();
+        const width = box.get_width() * clone.scale_x;
+        const height = box.get_height() * clone.scale_y;
+        const extents = this.get_transformed_extents();
+        const topLeft = extents.get_top_left();
+        const bottomRight = extents.get_bottom_right();
+        const reach = {
+            [St.Side.BOTTOM]: topLeft.y - y,
+            [St.Side.TOP]: y + height - bottomRight.y,
+            [St.Side.LEFT]: x + width - bottomRight.x,
+            [St.Side.RIGHT]: topLeft.x - x,
+        }[Utils.getPosition()] ?? 0;
+        return Math.max(0, Math.ceil(reach));
+    }
+
+    // Opens a menu past the magnified icon rather than over its top, the way
+    // the macOS Dock's menus clear a magnified icon: the side facing the dock
+    // gets the clearance on top of the theme's margin. Inline, so a restyle
+    // cannot drop it.
+    _clearMagnifiedIcon(menuActor, baseStyle, clearance) {
+        if (clearance <= 0) {
+            menuActor.style = baseStyle;
+            return;
+        }
+        const side = {
+            [St.Side.BOTTOM]: 'bottom',
+            [St.Side.TOP]: 'top',
+            [St.Side.LEFT]: 'left',
+            [St.Side.RIGHT]: 'right',
+        }[Utils.getPosition()];
+        const {scaleFactor} = St.ThemeContext.get_for_stage(global.stage);
+        const margin = (menuActor[`margin_${side}`] + clearance) / scaleFactor;
+        menuActor.style = `${baseStyle ?? ''} margin-${side}: ${margin}px;`;
+    }
+
     popupMenu() {
         this._removeMenuTimeout?.();
         this.fake_release();
@@ -813,11 +856,17 @@ export const DockAbstractAppIcon = GObject.registerClass({
                     // If horizontal also remove the height of the dash
                     const {dockFixed: fixedDock} = Docking.DockManager.settings;
                     const additionalMargin = isHorizontal && !fixedDock ? Main.overview.dash.height : 0;
-                    const verticalMargins = this._menu.actor.margin_top + this._menu.actor.margin_bottom;
+                    // Measure the theme's margins, not a previous opening's
+                    // clearance (below).
+                    this._menu.actor.style = null;
+                    this._menu.actor.ensure_style();
+                    const clearance = this._magnifiedClearance();
+                    const verticalMargins = this._menu.actor.margin_top + this._menu.actor.margin_bottom +
+                        (isHorizontal ? clearance : 0);
                     const maxMenuHeight = workArea.height - additionalMargin - verticalMargins;
                     // Also set a max width to the menu, so long labels (long windows title) get truncated
-                    this._menu.actor.style = 'max-width: 400px; ' +
-                        `max-height: ${Math.round(maxMenuHeight / scaleFactor)}px;`;
+                    this._clearMagnifiedIcon(this._menu.actor, 'max-width: 400px; ' +
+                        `max-height: ${Math.round(maxMenuHeight / scaleFactor)}px;`, clearance);
                 }
             });
             const id = Main.overview.connect('hiding', () => {
@@ -1096,10 +1145,16 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
         this.emit('menu-state-changed', !this._previewMenu.isOpen);
 
-        if (this._previewMenu.isOpen)
+        if (this._previewMenu.isOpen) {
             this._previewMenu.close();
-        else
+        } else {
+            this._previewMenuStyle ??= this._previewMenu.actor.get_style();
+            this._previewMenu.actor.style = this._previewMenuStyle;
+            this._previewMenu.actor.ensure_style();
+            this._clearMagnifiedIcon(this._previewMenu.actor, this._previewMenuStyle,
+                this._magnifiedClearance());
             this._previewMenu.popup();
+        }
 
         return false;
     }

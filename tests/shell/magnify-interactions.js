@@ -341,6 +341,40 @@ export async function run() {
         await wait(250);
         result.overflow = 'pass';
 
+        // An icon's menu holds the dock as it is painted, wherever the pointer
+        // goes, and opens past the magnified icon instead of over it. Closing
+        // it with the pointer away eases the row back rather than snapping.
+        await wait(600);
+        const held = icons.map(binScale);
+        check(held[2] > 1.45, 'the menu fixture must start magnified');
+        icons[2].popupMenu();
+        await wait(400);
+        const menu = icons[2]._menu;
+        check(menu?.isOpen, 'the icon menu must open');
+        const holding = () => icons.every((icon, i) => Math.abs(binScale(icon) - held[i]) < 0.01);
+        check(holding(), `opening a menu must hold the magnified row: ${icons.map(binScale)}`);
+        move(100, 100);
+        await wait(500);
+        check(holding(), `leaving the dock with a menu open must hold the row: ${icons.map(binScale)}`);
+        const [, cloneTop] = icons[2]._floatClone.get_transformed_position();
+        const [, menuY] = menu.actor.get_transformed_position();
+        const menuBottom = menuY + menu.actor.get_allocation_box().get_height();
+        check(menuBottom <= cloneTop + 0.5,
+            `the menu must open past the magnified icon: menu ends ${menuBottom}, icon starts ${cloneTop}`);
+        const easing = new Set();
+        const sampler = global.stage.connect('after-paint',
+            () => easing.add(Math.round(binScale(icons[2]) * 100)));
+        menu.close();
+        await wait(800);
+        global.stage.disconnect(sampler);
+        check(icons.every(icon => binScale(icon) === 1),
+            'closing the menu away from the dock must settle the row at rest');
+        const between = [...easing].filter(value => value > 100 && value < Math.round(held[2] * 100));
+        check(between.length >= 3, `the row must ease back after the menu, not snap: ${[...easing]}`);
+        result.menuHold = {clearance: Math.round(cloneTop - menuBottom), easedFrames: between.length};
+        move(px, py);
+        await wait(800);
+
         // Dragging with magnification on: the drag must freeze it at rest
         // (Shell's placeholder maths assumes uniform widths) and still land.
         const draggedId = icons[2].app.get_id();
