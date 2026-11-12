@@ -37,10 +37,12 @@ import {
     computeHeaderHeight,
     fillQuickAccess,
     filterCatalog,
+    findResizeEdge,
     getGridPosition,
     moveSelection,
     normalizeSearchText,
     planAdjacentDrawerReorder,
+    planLauncherResize,
     trailingCellCount,
     validateDrawerName,
 } from './appLauncherModel.js';
@@ -286,9 +288,21 @@ class LauncherAppIcon extends AppDisplay.AppIcon {
  * cached until their source signals change. Query updates only filter cached
  * strings and reparent a capped set of reusable actors.
  */
+// Pointer cursor for each draggable edge, keyed by findResizeEdge()'s x,y.
+const RESIZE_CURSORS = new Map([
+    ['-1,-1', 'NW_RESIZE'], ['0,-1', 'N_RESIZE'], ['1,-1', 'NE_RESIZE'],
+    ['-1,0', 'W_RESIZE'], ['1,0', 'E_RESIZE'],
+    ['-1,1', 'SW_RESIZE'], ['0,1', 'S_RESIZE'], ['1,1', 'SE_RESIZE'],
+]);
+
 export class AppGridLauncher {
-    constructor() {
+    /**
+     * @param {Gio.Settings} [settings] XDock's settings, which remember the
+     *   size the popup was dragged to
+     */
+    constructor(settings = null) {
         this._destroyed = false;
+        this._settings = settings;
         this._menu = null;
         this._menuManager = null;
         this._sourceButton = null;
@@ -340,6 +354,14 @@ export class AppGridLauncher {
         this._buttonUseSerial = 0;
         this._selectedIndex = -1;
         this._columns = DEFAULT_GRID_COLUMNS;
+        this._gridWidth = 0;
+        this._gridHeight = 0;
+        this._cellWidth = 0;
+        // An edge drag in progress, and the size it is asking for until the
+        // drag ends and the size is saved.
+        this._resize = null;
+        this._resizeRequest = null;
+        this._lastRimPress = null;
         this._iconSize = DEFAULT_ICON_SIZE;
         this._layoutDirty = true;
         this._rtl = null;
@@ -416,6 +438,17 @@ export class AppGridLauncher {
                 'workareas-changed',
                 () => this._onLayoutChanged(),
             ]);
+            if (this._settings) {
+                this._signalsHandler.add([
+                    this._settings,
+                    'changed::launcher-columns',
+                    () => this._onLayoutChanged(),
+                ], [
+                    this._settings,
+                    'changed::launcher-grid-height',
+                    () => this._onLayoutChanged(),
+                ]);
+            }
         } catch (error) {
             this._tryCleanup('catalog signal handler', () => signalsHandler?.destroy());
             this._tryCleanup('menu signal handler', () => menuSignalsHandler?.destroy());
@@ -1846,6 +1879,13 @@ export class AppGridLauncher {
             this._touchPanGesture = touchPanGesture;
             this._statusLabel = statusLabel;
 
+            // The rim of the popup resizes it. Connected before the menu
+            // manager so a drag can keep Escape and presses to itself; the
+            // manager's modal grab already delivers events outside the popup
+            // here, so the drag keeps following the pointer past its edge.
+            this._menuSignalsHandler.add(menu.actor, 'captured-event',
+                (actor, event) => this._onResizeEvent(event));
+
             // PopupMenuManager consumes Escape during event capture before a
             // focused entry/button sees it. Observe it first so the subsequent
             // close restores focus to the dock source rather than nowhere.
@@ -1893,6 +1933,8 @@ export class AppGridLauncher {
     _destroyMenu() {
         this._stopSmoothScroll();
         this._cancelDragClose();
+        this._resize = null;
+        this._resizeRequest = null;
         this._hoverLabelIcon = null;
         this._tryCleanup('pending layout callback', () => this._layoutTask?.cancel());
         this._tryCleanup('pending cache release', () => this._cacheReleaseTask?.cancel());
@@ -1971,6 +2013,9 @@ export class AppGridLauncher {
         this._stopSmoothScroll();
         this._hideHoverLabel({animate: false});
         this._cancelDragClose();
+        // Closing abandons a drag; the next open lays out the saved size.
+        this._cancelResize({apply: false});
+        this._setResizeCursor(null);
         if (this._restoreFocusOnClose && this._sourceButton?.mapped)
             this._sourceButton.grab_key_focus();
         this._restoreFocusOnClose = false;
@@ -2032,17 +2077,29 @@ export class AppGridLauncher {
         // the popup's height budget. Recomputed here rather than at build time
         // so a scale change moves both together.
         const headerHeight = computeHeaderHeight(Main.defaultIconSize);
+        // A drag in progress, else the size the last drag saved. Both are
+        // fitted to this monitor, so a size saved on a large screen still
+        // opens inside a small one.
+        const size = this._resizeRequest ?? {
+            columns: this._settings?.get_int('launcher-columns') ?? 0,
+            gridHeight: this._settings?.get_int('launcher-grid-height') ?? 0,
+        };
         const layout = computeGridLayout({
             workAreaWidth: workArea.width,
             workAreaHeight: workArea.height,
             textScale,
             sidebarWidth: SIDEBAR_WIDTH,
             chromeHeight: headerHeight + FOOTER_HEIGHT,
+            columns: size.columns,
+            gridHeight: size.gridHeight,
         });
 
         const iconSizeChanged = this._iconSize !== layout.iconSize;
         this._layoutDirty ||= this._columns !== layout.columns;
         this._columns = layout.columns;
+        this._gridWidth = layout.width;
+        this._gridHeight = layout.gridHeight;
+        this._cellWidth = layout.cellWidth;
         this._iconSize = layout.iconSize;
         this._header?.set_style(`height: ${headerHeight}px;`);
         this._footer?.set_style(`height: ${FOOTER_HEIGHT}px;`);
@@ -2087,6 +2144,191 @@ export class AppGridLauncher {
             // Monitor state is briefly inconsistent during Wayland hotplug.
             return null;
         }
+    }
+
+    // Dragging the popup's rim resizes it: the edges away from the dock and
+    // the corners between them. A double-click on the rim restores the
+    // default size. Everything else is left to the menu manager and the
+    // controls inside.
+    _onResizeEvent(event) {
+        const type = event.type();
+        if (this._resize) {
+            switch (type) {
+            case Clutter.EventType.MOTION:
+                this._updateResize(event);
+                return Clutter.EVENT_STOP;
+            case Clutter.EventType.BUTTON_RELEASE:
+                if (event.get_button() === this._resize.button)
+                    this._endResize();
+                return Clutter.EVENT_STOP;
+            case Clutter.EventType.KEY_PRESS:
+                if (event.get_key_symbol() === Clutter.KEY_Escape)
+                    this._cancelResize();
+                return Clutter.EVENT_STOP;
+            case Clutter.EventType.KEY_RELEASE:
+                return Clutter.EVENT_PROPAGATE;
+            default:
+                // A press, scroll, touch or crossing mid-drag would otherwise
+                // act on whatever happens to be under the pointer.
+                return Clutter.EVENT_STOP;
+            }
+        }
+
+        if (type !== Clutter.EventType.MOTION && type !== Clutter.EventType.BUTTON_PRESS &&
+            type !== Clutter.EventType.ENTER && type !== Clutter.EventType.LEAVE)
+            return Clutter.EVENT_PROPAGATE;
+
+        const [x, y] = event.get_coords();
+        const edge = this._resizeEdgeAt(x, y);
+        this._setResizeCursor(edge);
+        if (!edge || type !== Clutter.EventType.BUTTON_PRESS ||
+            event.get_button() !== Clutter.BUTTON_PRIMARY)
+            return Clutter.EVENT_PROPAGATE;
+
+        // Clutter no longer counts clicks, so measure a double-click here,
+        // against the desktop's own double-click time and distance.
+        const time = event.get_time();
+        const last = this._lastRimPress;
+        const clutterSettings = Clutter.Settings.get_default();
+        const doubleClick = last &&
+            time - last.time <= clutterSettings.double_click_time &&
+            Math.hypot(x - last.x, y - last.y) <= clutterSettings.double_click_distance;
+        this._lastRimPress = doubleClick ? null : {time, x, y};
+        if (doubleClick)
+            this._resetSize();
+        else
+            this._beginResize(edge, x, y);
+        return Clutter.EVENT_STOP;
+    }
+
+    _resizeEdgeAt(x, y) {
+        const surface = this._menu?.box;
+        if (!this.isOpen || this._iconMenuOpen || this._drawerMenuOpen ||
+            this._powerMenuOpen || this._draggingIcon || this._draggingRow ||
+            !surface?.has_allocation())
+            return null;
+
+        const [surfaceX, surfaceY] = surface.get_transformed_position();
+        const [width, height] = surface.get_transformed_size();
+        return findResizeEdge({x, y},
+            {x: surfaceX, y: surfaceY, width, height}, this._arrowSide);
+    }
+
+    _setResizeCursor(edge) {
+        const actor = this._menu?.actor;
+        // Per-actor cursors arrived in Mutter 48; without them the rim still
+        // resizes, it just does not announce itself.
+        if (!actor?.set_cursor_type)
+            return;
+
+        const name = edge ? RESIZE_CURSORS.get(`${edge.x},${edge.y}`) : null;
+        const cursor = name ? Clutter.CursorType[name] : Clutter.CursorType.INHERIT;
+        if (actor.get_cursor_type() !== cursor)
+            actor.set_cursor_type(cursor);
+    }
+
+    _beginResize(edge, x, y) {
+        this._hideHoverLabel({animate: false});
+        this._stopSmoothScroll();
+        // Where on the rim the pointer took hold, so the edge stays that far
+        // from it instead of jumping under it.
+        const surface = this._resizeSurface();
+        this._resize = {
+            edge,
+            button: Clutter.BUTTON_PRIMARY,
+            offset: {
+                x: x - (edge.x > 0 ? surface.x + surface.width : surface.x),
+                y: y - (edge.y > 0 ? surface.y + surface.height : surface.y),
+            },
+            start: {columns: this._columns, gridHeight: this._gridHeight},
+            // The axis not being dragged keeps what was saved, including the
+            // default (0): taking its current value would switch it to the
+            // dragged-size rules mid-drag.
+            saved: {
+                columns: this._settings?.get_int('launcher-columns') ?? 0,
+                gridHeight: this._settings?.get_int('launcher-grid-height') ?? 0,
+            },
+        };
+    }
+
+    _resizeSurface() {
+        const [x, y] = this._menu.box.get_transformed_position();
+        const [width, height] = this._menu.box.get_transformed_size();
+        return {x, y, width, height};
+    }
+
+    _updateResize(event) {
+        const [x, y] = event.get_coords();
+        const {edge, offset} = this._resize;
+        const [sourceX, sourceY] = this._sourceButton.get_transformed_position();
+        const [sourceWidth, sourceHeight] = this._sourceButton.get_transformed_size();
+        const size = planLauncherResize({
+            edge,
+            arrowSide: this._arrowSide,
+            target: {x: x - offset.x, y: y - offset.y},
+            surface: this._resizeSurface(),
+            sourceCenter: {x: sourceX + sourceWidth / 2, y: sourceY + sourceHeight / 2},
+            size: {columns: this._columns, gridWidth: this._gridWidth, gridHeight: this._gridHeight},
+            cellWidth: this._cellWidth,
+        });
+        const {saved} = this._resize;
+        const next = {
+            columns: edge.x ? size.columns : saved.columns,
+            gridHeight: edge.y ? size.gridHeight : saved.gridHeight,
+        };
+        const request = this._resizeRequest;
+        if (next.columns === request?.columns && next.gridHeight === request?.gridHeight ||
+            !request && size.columns === this._columns && size.gridHeight === this._gridHeight)
+            return;
+
+        this._resizeRequest = next;
+        this._applyResize();
+    }
+
+    // Saves the size the popup reached, which the monitor may have capped
+    // below what the pointer asked for, and only along the axes dragged: a
+    // drag of the top edge leaves the width following the default.
+    _endResize() {
+        const {edge, start} = this._resize;
+        this._resize = null;
+        if (this._settings) {
+            if (edge.x && this._columns !== start.columns)
+                this._settings.set_int('launcher-columns', this._columns);
+            if (edge.y && this._gridHeight !== start.gridHeight)
+                this._settings.set_int('launcher-grid-height', this._gridHeight);
+            this._resizeRequest = null;
+            this._applyResize();
+        }
+
+        const [x, y] = global.get_pointer();
+        this._setResizeCursor(this._resizeEdgeAt(x, y));
+    }
+
+    _cancelResize({apply = true} = {}) {
+        if (!this._resize)
+            return;
+
+        this._resize = null;
+        this._resizeRequest = null;
+        if (apply)
+            this._applyResize();
+    }
+
+    _resetSize() {
+        this._resize = null;
+        this._resizeRequest = null;
+        this._settings?.reset('launcher-columns');
+        this._settings?.reset('launcher-grid-height');
+        this._applyResize();
+    }
+
+    _applyResize() {
+        if (!this._menu || !this._applyResponsiveLayout())
+            return;
+        // Only a change of columns reflows the results; a new height just
+        // shows more or fewer rows of the same grid.
+        if (this._layoutDirty)
+            this._renderResults(this._entry.get_text());
     }
 
     _stopSmoothScroll() {

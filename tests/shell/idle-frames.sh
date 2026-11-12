@@ -25,7 +25,8 @@ fi
 cp -r "$probe" "$installed/"
 cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
     "$(dirname "$0")/icon-refresh.js" "$(dirname "$0")/dwell-interactions.js" \
-    "$(dirname "$0")/launcher-scrolling.js" "$(dirname "$0")/launcher-motion.js" "$installed/"
+    "$(dirname "$0")/launcher-scrolling.js" "$(dirname "$0")/launcher-motion.js" \
+    "$(dirname "$0")/launcher-resize.js" "$installed/"
 # Real desktop entries let Shell's application system populate the launcher;
 # no application or data from the host session is used.
 mkdir -p "$XDG_DATA_HOME/applications"

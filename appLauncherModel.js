@@ -15,6 +15,24 @@ const MIN_POPUP_HEIGHT = 220;
 const MAX_POPUP_HEIGHT = 440;
 // Floor for the results area once the header and footer have taken their share.
 const MIN_GRID_HEIGHT = 160;
+// A size dragged by the user is still clamped to the monitor. These leave room
+// for the parts of the popup outside the grid and the sidebar: the search entry,
+// status line, padding and arrow (138px tall, 50px wide with the default theme).
+const RESIZE_VERTICAL_ALLOWANCE = 160;
+const RESIZE_HORIZONTAL_ALLOWANCE = 32;
+// Narrowest width a drag can produce where the monitor has room for more.
+export const MIN_RESIZED_COLUMNS = 3;
+
+// The rim of the popup that resizes it: this far inside its visible edge and a
+// little outside it, wider at the corners so that both axes are easy to catch.
+const RESIZE_BAND = 8;
+const RESIZE_OUTSIDE = 4;
+const RESIZE_CORNER = 20;
+// Allocation rounding keeps a centred popup within a pixel of its button.
+const CENTERED_TOLERANCE = 2;
+
+// St.Side, which this module cannot import.
+const Side = Object.freeze({TOP: 0, RIGHT: 1, BOTTOM: 2, LEFT: 3});
 
 /**
  * Preferred sidebar width, in logical pixels.
@@ -185,8 +203,10 @@ export function planAdjacentDrawerReorder(order, id, direction) {
  * @param {number} params.textScale desktop text scale
  * @param {number} params.sidebarWidth width the drawer sidebar takes from the budget
  * @param {number} params.chromeHeight height of the header and footer bars
+ * @param {number} params.columns columns the user resized to, or 0 for the default
+ * @param {number} params.gridHeight results height the user resized to, or 0
  * @returns {{columns: number, width: number, sidebarWidth: number,
- *   gridHeight: number, iconSize: number}}
+ *   gridHeight: number, iconSize: number, cellWidth: number}}
  */
 export function computeGridLayout({
     workAreaWidth,
@@ -194,6 +214,8 @@ export function computeGridLayout({
     textScale = 1,
     sidebarWidth = 0,
     chromeHeight = 0,
+    columns: resizedColumns = 0,
+    gridHeight: resizedHeight = 0,
 }) {
     const logicalWidth = Number.isFinite(workAreaWidth) && workAreaWidth > 0
         ? workAreaWidth
@@ -223,7 +245,13 @@ export function computeGridLayout({
     // Keep the launcher a compact dock popover rather than a second overview.
     // Reduce the surface, not the desktop's text or pointer target sizes.
     const targetWidth = Math.min(availableWidth, MAX_GRID_WIDTH);
-    const columns = clamp(Math.floor(targetWidth / cellWidth), MIN_COLUMNS, MAX_COLUMNS);
+    // A dragged width is whole columns, so a tile is the same size at any
+    // width. It is the user's choice of surface, so only the monitor bounds it.
+    const fitColumns = Math.max(MIN_COLUMNS,
+        Math.floor((availableWidth - RESIZE_HORIZONTAL_ALLOWANCE) / cellWidth));
+    const columns = isPositive(resizedColumns)
+        ? clamp(Math.round(resizedColumns), Math.min(MIN_RESIZED_COLUMNS, fitColumns), fitColumns)
+        : clamp(Math.floor(targetWidth / cellWidth), MIN_COLUMNS, MAX_COLUMNS);
     const width = Math.min(availableWidth, columns * cellWidth);
     // A fixed height, NOT a ceiling. Applied as max-height the popup grew and
     // shrank with the result count, so it jumped on every keystroke that
@@ -246,7 +274,12 @@ export function computeGridLayout({
     const chrome = Math.max(0, Number.isFinite(chromeHeight) ? chromeHeight : 0);
     const budget = clamp(Math.floor(logicalHeight * 0.66),
         MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT);
-    const gridHeight = Math.max(MIN_GRID_HEIGHT, budget - chrome);
+    // A dragged height is still a fixed height: it replaces the default, it
+    // does not follow the results.
+    const gridHeight = isPositive(resizedHeight)
+        ? clamp(Math.round(resizedHeight), MIN_GRID_HEIGHT,
+            Math.max(MIN_GRID_HEIGHT, logicalHeight - chrome - RESIZE_VERTICAL_ALLOWANCE))
+        : Math.max(MIN_GRID_HEIGHT, budget - chrome);
     const iconSize = logicalWidth < 560 || safeTextScale >= 1.5 ? 40 : 48;
 
     return {
@@ -255,7 +288,121 @@ export function computeGridLayout({
         sidebarWidth: effectiveSidebar,
         gridHeight,
         iconSize,
+        cellWidth,
     };
+}
+
+function isPositive(value) {
+    return Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Which edge of the launcher a point would drag: any edge except the one
+ * whose arrow points at the dock, and the corners between them.
+ *
+ * @param {{x: number, y: number}} point stage position
+ * @param {{x: number, y: number, width: number, height: number}} rect the
+ *   popup's visible surface, in stage coordinates
+ * @param {number} arrowSide St.Side the arrow points from
+ * @returns {{x: number, y: number}|null} -1 for the left or top edge, 1 for
+ *   the right or bottom edge, 0 for neither; null when no edge is under it
+ */
+export function findResizeEdge(point, rect, arrowSide) {
+    const {x, y} = point;
+    if (x < rect.x - RESIZE_OUTSIDE || x > rect.x + rect.width + RESIZE_OUTSIDE ||
+        y < rect.y - RESIZE_OUTSIDE || y > rect.y + rect.height + RESIZE_OUTSIDE)
+        return null;
+
+    const near = (start, end, reach) => {
+        if (start <= reach)
+            return -1;
+        return end <= reach ? 1 : 0;
+    };
+    const left = x - rect.x;
+    const right = rect.x + rect.width - x;
+    const top = y - rect.y;
+    const bottom = rect.y + rect.height - y;
+    let edgeX = near(left, right, RESIZE_BAND);
+    let edgeY = near(top, bottom, RESIZE_BAND);
+    if (edgeX && !edgeY)
+        edgeY = near(top, bottom, RESIZE_CORNER);
+    else if (edgeY && !edgeX)
+        edgeX = near(left, right, RESIZE_CORNER);
+
+    // The arrow's edge stays against the dock.
+    if (arrowSide === Side.TOP && edgeY < 0 || arrowSide === Side.BOTTOM && edgeY > 0)
+        edgeY = 0;
+    if (arrowSide === Side.LEFT && edgeX < 0 || arrowSide === Side.RIGHT && edgeX > 0)
+        edgeX = 0;
+    return edgeX || edgeY ? {x: edgeX, y: edgeY} : null;
+}
+
+/**
+ * The size a drag asks for, before computeGridLayout() fits it to the monitor:
+ * the size that puts the dragged edge where the pointer holds it.
+ *
+ * Measured from the popup as it is now rather than from where the drag began,
+ * because how an edge responds to a new size depends on where the popup sits.
+ * Away from the dock only the dragged edge moves. Along the dock the popup is
+ * centred on its button, so both edges move and the size changes by twice the
+ * pointer's travel -- until the popup meets the screen edge and is pushed
+ * along, after which only the free side moves again.
+ *
+ * @param {object} params drag state
+ * @param {{x: number, y: number}} params.edge from findResizeEdge()
+ * @param {number} params.arrowSide St.Side the arrow points from
+ * @param {{x: number, y: number}} params.target where the dragged edge belongs
+ * @param {{x: number, y: number, width: number, height: number}} params.surface
+ *   the popup's visible surface now
+ * @param {{x: number, y: number}} params.sourceCenter centre of its dock button
+ * @param {{columns: number, gridWidth: number, gridHeight: number}} params.size
+ *   the grid's current size
+ * @param {number} params.cellWidth width of one result column
+ * @returns {{columns: number, gridHeight: number}} requested size
+ */
+export function planLauncherResize({edge, arrowSide, target, surface, sourceCenter, size, cellWidth}) {
+    const alongX = arrowSide === Side.TOP || arrowSide === Side.BOTTOM;
+    let {columns, gridHeight} = size;
+    if (edge.x) {
+        const width = spanTo(edge.x, target.x, surface.x, surface.width,
+            alongX ? sourceCenter.x : null);
+        columns = Math.max(1, Math.round((width - surface.width + size.gridWidth) / cellWidth));
+    }
+    if (edge.y) {
+        const height = spanTo(edge.y, target.y, surface.y, surface.height,
+            alongX ? null : sourceCenter.y);
+        gridHeight = Math.max(1, Math.round(height - surface.height + size.gridHeight));
+    }
+    return {columns, gridHeight};
+}
+
+// How long the popup must be along one axis to put its edge on the `direction`
+// side (-1 start, 1 end) at `target`. `center` is the button the popup is
+// centred on along this axis, or null where the opposite edge is held by the dock.
+function spanTo(direction, target, start, length, center) {
+    const end = start + length;
+    const opposite = direction > 0 ? start : end;
+    if (center === null)
+        return direction * (target - opposite);
+
+    const shift = start + length / 2 - center;
+    if (Math.abs(shift) <= CENTERED_TOLERANCE)
+        return 2 * direction * (target - center);
+    // Pushed along by the screen edge behind the dragged side: that side is
+    // held there, while the dragged edge moves alone -- unless the new length
+    // is short enough for the popup to centre on its button again.
+    if (Math.sign(shift) === direction) {
+        const held = direction * (target - opposite);
+        const centredOpposite = center - direction * held / 2;
+        return direction * (opposite - centredOpposite) > 0
+            ? held : 2 * direction * (target - center);
+    }
+    // The dragged side itself is at the screen edge. It cannot go further out;
+    // drawn back in, the popup recentres on its button.
+    const edgeNow = direction > 0 ? end : start;
+    if (direction * (target - edgeNow) >= 0)
+        return length;
+    return 2 * direction * (target - center);
 }
 
 export const MAX_DRAWER_NAME_LENGTH = 40;

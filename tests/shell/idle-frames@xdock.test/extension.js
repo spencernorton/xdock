@@ -21,6 +21,7 @@ import {run as magnifyInteractions} from '../magnify-interactions.js';
 import {run as iconRefresh} from '../icon-refresh.js';
 import {run as launcherMotion} from '../launcher-motion.js';
 import {run as launcherScrolling} from '../launcher-scrolling.js';
+import {run as launcherResize} from '../launcher-resize.js';
 
 const XDOCK = 'xdock@spencercnorton.github.io';
 
@@ -180,6 +181,7 @@ export default class IdleFramesProbe extends Extension {
         report('popup interactions', JSON.stringify(await popupInteractions()));
         report('launcher motion', JSON.stringify(await launcherMotion()));
         report('launcher scrolling', JSON.stringify(await launcherScrolling()));
+        report('launcher resize', JSON.stringify(await launcherResize()));
         report('magnify interactions', JSON.stringify(await magnifyInteractions()));
         const refresh = await iconRefresh();
         report('icon refresh', JSON.stringify(refresh));
