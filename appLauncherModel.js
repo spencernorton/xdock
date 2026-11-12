@@ -1,6 +1,8 @@
 // -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
 
-export const MAX_VISIBLE_RESULTS = 72;
+// Every match is rendered: a capped list hid apps behind a "Showing N of M"
+// line. Callers may still pass their own limit to filterCatalog().
+export const MAX_VISIBLE_RESULTS = Infinity;
 export const QUICK_ACCESS_COUNT = 6;
 
 const MIN_COLUMNS = 1;
@@ -101,8 +103,8 @@ export function normalizeSearchText(value) {
 
 /**
  * Return matching catalog entries in their existing (favorites/name) order.
- * Filtering never enumerates Shell applications or sorts results, and the
- * returned actor workload is explicitly capped.
+ * Filtering never enumerates Shell applications or sorts results. A limit
+ * caps the returned entries; by default every match is returned.
  *
  * @param {object[]} catalog cached launcher catalog
  * @param {string} query user query
@@ -203,8 +205,10 @@ export function planAdjacentDrawerReorder(order, id, direction) {
  * @param {number} params.textScale desktop text scale
  * @param {number} params.sidebarWidth width the drawer sidebar takes from the budget
  * @param {number} params.chromeHeight height of the header and footer bars
- * @param {number} params.columns columns the user resized to, or 0 for the default
+ * @param {number} params.gridWidth results width the user resized to, or 0 for the default
  * @param {number} params.gridHeight results height the user resized to, or 0
+ * @param {number} params.columns a width saved as columns by an earlier
+ *   version, used only when gridWidth is 0
  * @returns {{columns: number, width: number, sidebarWidth: number,
  *   gridHeight: number, iconSize: number, cellWidth: number}}
  */
@@ -214,8 +218,9 @@ export function computeGridLayout({
     textScale = 1,
     sidebarWidth = 0,
     chromeHeight = 0,
-    columns: resizedColumns = 0,
+    gridWidth: resizedWidth = 0,
     gridHeight: resizedHeight = 0,
+    columns: resizedColumns = 0,
 }) {
     const logicalWidth = Number.isFinite(workAreaWidth) && workAreaWidth > 0
         ? workAreaWidth
@@ -245,14 +250,25 @@ export function computeGridLayout({
     // Keep the launcher a compact dock popover rather than a second overview.
     // Reduce the surface, not the desktop's text or pointer target sizes.
     const targetWidth = Math.min(availableWidth, MAX_GRID_WIDTH);
-    // A dragged width is whole columns, so a tile is the same size at any
-    // width. It is the user's choice of surface, so only the monitor bounds it.
-    const fitColumns = Math.max(MIN_COLUMNS,
-        Math.floor((availableWidth - RESIZE_HORIZONTAL_ALLOWANCE) / cellWidth));
-    const columns = isPositive(resizedColumns)
-        ? clamp(Math.round(resizedColumns), Math.min(MIN_RESIZED_COLUMNS, fitColumns), fitColumns)
-        : clamp(Math.floor(targetWidth / cellWidth), MIN_COLUMNS, MAX_COLUMNS);
-    const width = Math.min(availableWidth, columns * cellWidth);
+    // A dragged width follows the pointer to the pixel; as many whole columns
+    // as fit are laid out across it, and the tiles share what is left over.
+    // It is the user's choice of surface, so only the monitor bounds it.
+    // A width saved as whole columns, before widths were saved in pixels.
+    if (!isPositive(resizedWidth) && isPositive(resizedColumns))
+        resizedWidth = resizedColumns * cellWidth;
+    let columns, width;
+    if (isPositive(resizedWidth)) {
+        // Never wider than the space there is: on a tiny work area one
+        // column contracts, as it does in the default layout.
+        const widest = Math.min(availableWidth,
+            Math.max(cellWidth, availableWidth - RESIZE_HORIZONTAL_ALLOWANCE));
+        width = clamp(Math.round(resizedWidth),
+            Math.min(MIN_RESIZED_COLUMNS * cellWidth, widest), widest);
+        columns = Math.max(MIN_COLUMNS, Math.floor(width / cellWidth));
+    } else {
+        columns = clamp(Math.floor(targetWidth / cellWidth), MIN_COLUMNS, MAX_COLUMNS);
+        width = Math.min(availableWidth, columns * cellWidth);
+    }
     // A fixed height, NOT a ceiling. Applied as max-height the popup grew and
     // shrank with the result count, so it jumped on every keystroke that
     // changed how many apps matched. Nothing here takes a result count, which
@@ -339,41 +355,40 @@ export function findResizeEdge(point, rect, arrowSide) {
 
 /**
  * The size a drag asks for, before computeGridLayout() fits it to the monitor:
- * the size that puts the dragged edge where the pointer holds it.
+ * the results size that puts the dragged edge where the pointer holds it.
  *
- * Measured from the popup as it is now rather than from where the drag began,
- * because how an edge responds to a new size depends on where the popup sits.
  * Away from the dock only the dragged edge moves. Along the dock the popup is
  * centred on its button, so both edges move and the size changes by twice the
  * pointer's travel -- until the popup meets the screen edge and is pushed
- * along, after which only the free side moves again.
+ * along, after which only the free side moves again. Where it sits is read
+ * from the popup as last laid out; the rest of the popup around the results
+ * (`chrome`) is measured once, when the drag begins, so a frame whose layout
+ * has not caught up yet cannot skew it.
  *
  * @param {object} params drag state
  * @param {{x: number, y: number}} params.edge from findResizeEdge()
  * @param {number} params.arrowSide St.Side the arrow points from
  * @param {{x: number, y: number}} params.target where the dragged edge belongs
  * @param {{x: number, y: number, width: number, height: number}} params.surface
- *   the popup's visible surface now
+ *   the popup's visible surface as last laid out
  * @param {{x: number, y: number}} params.sourceCenter centre of its dock button
- * @param {{columns: number, gridWidth: number, gridHeight: number}} params.size
- *   the grid's current size
- * @param {number} params.cellWidth width of one result column
- * @returns {{columns: number, gridHeight: number}} requested size
+ * @param {{width: number, height: number}} params.chrome the popup's extent
+ *   beyond its results area
+ * @returns {{gridWidth: number|null, gridHeight: number|null}} requested
+ *   results size; null along an axis the edge does not drag
  */
-export function planLauncherResize({edge, arrowSide, target, surface, sourceCenter, size, cellWidth}) {
+export function planLauncherResize({edge, arrowSide, target, surface, sourceCenter, chrome}) {
     const alongX = arrowSide === Side.TOP || arrowSide === Side.BOTTOM;
-    let {columns, gridHeight} = size;
-    if (edge.x) {
-        const width = spanTo(edge.x, target.x, surface.x, surface.width,
-            alongX ? sourceCenter.x : null);
-        columns = Math.max(1, Math.round((width - surface.width + size.gridWidth) / cellWidth));
-    }
-    if (edge.y) {
-        const height = spanTo(edge.y, target.y, surface.y, surface.height,
-            alongX ? null : sourceCenter.y);
-        gridHeight = Math.max(1, Math.round(height - surface.height + size.gridHeight));
-    }
-    return {columns, gridHeight};
+    const gridWidth = edge.x
+        ? spanTo(edge.x, target.x, surface.x, surface.width, alongX ? sourceCenter.x : null) - chrome.width
+        : null;
+    const gridHeight = edge.y
+        ? spanTo(edge.y, target.y, surface.y, surface.height, alongX ? null : sourceCenter.y) - chrome.height
+        : null;
+    return {
+        gridWidth: gridWidth === null ? null : Math.max(1, gridWidth),
+        gridHeight: gridHeight === null ? null : Math.max(1, gridHeight),
+    };
 }
 
 // How long the popup must be along one axis to put its edge on the `direction`

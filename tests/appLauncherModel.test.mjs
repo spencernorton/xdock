@@ -47,10 +47,15 @@ assert.deepEqual(filterCatalog(catalog, 'visual editor').items.map(item => item.
     ['Visual Studio Code']);
 assert.equal(filterCatalog(catalog, 'missing').total, 0);
 
-const largeCatalog = Array.from({length: MAX_VISIBLE_RESULTS + 8},
-    (_, i) => entry(`Application ${i}`));
-const capped = filterCatalog(largeCatalog, '');
-assert.equal(capped.items.length, MAX_VISIBLE_RESULTS);
+// Every match is shown: a capped All Apps view hid apps behind a "Showing N of
+// M" line. An explicit limit still caps.
+assert.equal(MAX_VISIBLE_RESULTS, Infinity);
+const largeCatalog = Array.from({length: 300}, (_, i) => entry(`Application ${i}`));
+const everything = filterCatalog(largeCatalog, '');
+assert.equal(everything.items.length, largeCatalog.length);
+assert.equal(everything.truncated, false);
+const capped = filterCatalog(largeCatalog, '', 72);
+assert.equal(capped.items.length, 72);
 assert.equal(capped.total, largeCatalog.length);
 assert.equal(capped.truncated, true);
 
@@ -536,8 +541,9 @@ assert.doesNotMatch(rowKeyBody, /symbol === Clutter\.KEY_Right/,
 console.log(`appLauncherModel and runtime contracts: passed (menu contract: ${
     [...required].sort().join(', ')})`);
 
-// A size dragged by the user replaces the compact default in both axes, and is
-// whole columns wide so result tiles keep their size.
+// A size dragged by the user replaces the compact default in both axes. The
+// width follows the pointer to the pixel; as many whole columns as fit are
+// laid out across it.
 const fourK = {
     workAreaWidth: 3840,
     workAreaHeight: 2041,
@@ -545,13 +551,22 @@ const fourK = {
     chromeHeight: computeHeaderHeight(64) + 40,
 };
 const defaultFourK = computeGridLayout(fourK);
-assert.deepEqual(computeGridLayout({...fourK, columns: 0, gridHeight: 0}), defaultFourK,
+assert.deepEqual(computeGridLayout({...fourK, gridWidth: 0, gridHeight: 0}), defaultFourK,
     'an unset size must keep the default layout');
-const resized = computeGridLayout({...fourK, columns: 10, gridHeight: 700});
-assert.equal(resized.columns, 10, 'a dragged width may exceed the default six columns');
-assert.equal(resized.width, 10 * resized.cellWidth);
+const resized = computeGridLayout({...fourK, gridWidth: 837, gridHeight: 700});
+assert.equal(resized.width, 837, 'a dragged width is kept to the pixel');
+assert.equal(resized.columns, 10, 'as many whole columns as fit');
 assert.equal(resized.gridHeight, 700, 'a dragged height may exceed the default budget');
 assert.equal(resized.iconSize, defaultFourK.iconSize, 'resizing must not change icon size');
+assert.equal(computeGridLayout({...fourK, gridWidth: 237.6}).width, 240,
+    'the narrowest dragged width keeps three columns');
+assert.equal(computeGridLayout({...fourK, gridWidth: 300}).columns, 3);
+// A width saved as columns by the previous version is still honoured.
+const legacy = computeGridLayout({...fourK, columns: 4});
+assert.equal(legacy.width, 4 * legacy.cellWidth);
+assert.equal(legacy.columns, 4);
+assert.equal(computeGridLayout({...fourK, gridWidth: 500, columns: 4}).width, 500,
+    'a pixel width replaces the old column count');
 
 // The monitor still bounds a saved size, so a size dragged on a large screen
 // opens inside a small one with room left for the rest of the popup.
@@ -560,18 +575,25 @@ const laptop = computeGridLayout({
     workAreaHeight: 700,
     sidebarWidth: SIDEBAR_WIDTH,
     chromeHeight: computeHeaderHeight(64) + 40,
-    columns: 40,
+    gridWidth: 4000,
     gridHeight: 4000,
 });
 assert.ok(laptop.width + laptop.sidebarWidth + 50 <= 1366,
     `a saved width must fit the monitor: ${laptop.width}`);
 assert.ok(laptop.gridHeight + computeHeaderHeight(64) + 40 + 138 <= 700,
     `a saved height must fit the monitor: ${laptop.gridHeight}`);
-const narrowest = computeGridLayout({...fourK, columns: 1, gridHeight: 10});
+const narrowest = computeGridLayout({...fourK, gridWidth: 10, gridHeight: 10});
 assert.equal(narrowest.columns, MIN_RESIZED_COLUMNS, 'a drag keeps a usable width');
 assert.equal(narrowest.gridHeight, 160, 'a drag keeps a usable height');
-assert.equal(computeGridLayout({workAreaWidth: 300, workAreaHeight: 600, columns: 8}).columns, 2,
-    'the minimum gives way where the monitor cannot fit it');
+const cramped = computeGridLayout({workAreaWidth: 240, workAreaHeight: 600, textScale: 2,
+    sidebarWidth: SIDEBAR_WIDTH, gridWidth: 900});
+const crampedDefault = computeGridLayout({workAreaWidth: 240, workAreaHeight: 600, textScale: 2,
+    sidebarWidth: SIDEBAR_WIDTH});
+assert.ok(cramped.width + cramped.sidebarWidth <= crampedDefault.width + crampedDefault.sidebarWidth,
+    `a saved width must not overflow a tiny work area: ${JSON.stringify(cramped)}`);
+const tiny = computeGridLayout({workAreaWidth: 300, workAreaHeight: 600, gridWidth: 640});
+assert.ok(tiny.width <= 300 - 32 && tiny.columns >= 1,
+    `the minimum gives way where the monitor cannot fit it: ${JSON.stringify(tiny)}`);
 
 // The rim resizes; the edge whose arrow points at the dock does not.
 const surface = {x: 1000, y: 1500, width: 680, height: 560};
@@ -594,32 +616,33 @@ assert.equal(findResizeEdge({x: 1004, y: 1800}, surface, LEFT), null,
     'a popup beside a left dock keeps its left edge on the dock');
 assert.deepEqual(findResizeEdge({x: 1676, y: 1800}, surface, LEFT), {x: 1, y: 0});
 
-// The dragged edge lands where the pointer holds it. Along the dock the popup
-// stays centred on its button, so both edges move: the size changes by twice
-// the pointer's travel. Away from the dock, by the travel itself.
-const size = {columns: 6, gridWidth: 480, gridHeight: 320};
+// The dragged edge lands where the pointer holds it, to the pixel. Along the
+// dock the popup stays centred on its button, so both edges move: the size
+// changes by twice the pointer's travel. Away from the dock, by the travel.
+const chrome = {width: 200, height: 240};
 const popup = {x: 1000, y: 1500, width: 680, height: 560};
 const button = {x: 1340, y: 2110};
 const plan = (edge, target, arrowSide = BOTTOM, surface = popup, sourceCenter = button) =>
-    planLauncherResize({edge, arrowSide, target, surface, sourceCenter, size, cellWidth: 80});
-assert.deepEqual(plan({x: 1, y: 0}, {x: 1680 + 80, y: 0}), {columns: 8, gridHeight: 320},
+    planLauncherResize({edge, arrowSide, target, surface, sourceCenter, chrome});
+assert.deepEqual(plan({x: 1, y: 0}, {x: 1680 + 80, y: 0}), {gridWidth: 680 + 160 - 200, gridHeight: null},
     'a centred popup widens on both sides');
-assert.deepEqual(plan({x: -1, y: 0}, {x: 1000 + 80, y: 0}), {columns: 4, gridHeight: 320});
-assert.deepEqual(plan({x: 1, y: 0}, {x: 1680 + 19, y: 0}), {columns: 6, gridHeight: 320},
-    'columns change only once the edge passes half a column');
-assert.deepEqual(plan({x: 0, y: -1}, {x: 0, y: 1500 - 100}), {columns: 6, gridHeight: 420},
+assert.deepEqual(plan({x: -1, y: 0}, {x: 1000 + 80, y: 0}), {gridWidth: 680 - 160 - 200, gridHeight: null});
+assert.deepEqual(plan({x: 1, y: 0}, {x: 1680 + 7, y: 0}), {gridWidth: 680 + 14 - 200, gridHeight: null},
+    'a small drag is a small change, not a column');
+assert.deepEqual(plan({x: 0, y: -1}, {x: 0, y: 1500 - 100}), {gridWidth: null, gridHeight: 560 + 100 - 240},
     'away from the dock the edge moves by the travel');
-assert.deepEqual(plan({x: 1, y: -1}, {x: 1680 + 40, y: 1500 - 100}), {columns: 7, gridHeight: 420});
+assert.deepEqual(plan({x: 1, y: -1}, {x: 1680 + 40, y: 1500 - 100}),
+    {gridWidth: 680 + 80 - 200, gridHeight: 560 + 100 - 240});
 
 // Pushed against the left of the screen, the popup is no longer centred on its
 // button: its left side is held, so the right edge alone follows the pointer.
 const pushed = {x: 8, y: 1500, width: 680, height: 560};
 const nearLeft = {x: 200, y: 2110};
-assert.deepEqual(plan({x: 1, y: 0}, {x: 688 + 80, y: 0}, BOTTOM, pushed, nearLeft),
-    {columns: 7, gridHeight: 320}, 'a held side leaves the dragged edge to move alone');
-assert.deepEqual(plan({x: -1, y: 0}, {x: 8 - 80, y: 0}, BOTTOM, pushed, nearLeft),
-    {columns: 6, gridHeight: 320}, 'an edge held by the screen cannot be dragged past it');
-assert.deepEqual(plan({x: -1, y: 0}, {x: 8 + 80, y: 0}, BOTTOM, pushed, nearLeft).columns <= 6, true,
+assert.equal(plan({x: 1, y: 0}, {x: 688 + 80, y: 0}, BOTTOM, pushed, nearLeft).gridWidth,
+    680 + 80 - 200, 'a held side leaves the dragged edge to move alone');
+assert.equal(plan({x: -1, y: 0}, {x: 8 - 80, y: 0}, BOTTOM, pushed, nearLeft).gridWidth,
+    680 - 200, 'an edge held by the screen cannot be dragged past it');
+assert.ok(plan({x: -1, y: 0}, {x: 8 + 80, y: 0}, BOTTOM, pushed, nearLeft).gridWidth < 680 - 200,
     'drawn back in, a held edge shrinks the popup');
 
 // Beside a left dock the axes swap: the width follows the pointer one for one
@@ -627,9 +650,9 @@ assert.deepEqual(plan({x: -1, y: 0}, {x: 8 + 80, y: 0}, BOTTOM, pushed, nearLeft
 const side = {x: 90, y: 600, width: 680, height: 560};
 const sideButton = {x: 40, y: 880};
 assert.deepEqual(plan({x: 1, y: 0}, {x: 770 + 80, y: 0}, LEFT, side, sideButton),
-    {columns: 7, gridHeight: 320});
+    {gridWidth: 680 + 80 - 200, gridHeight: null});
 assert.deepEqual(plan({x: 0, y: 1}, {x: 0, y: 1160 + 50}, LEFT, side, sideButton),
-    {columns: 6, gridHeight: 420});
+    {gridWidth: null, gridHeight: 560 + 100 - 240});
 
 // Drawn in far enough, a popup the screen was holding centres on its button
 // again, and the size must be the one that lands the edge there at once.
@@ -639,9 +662,7 @@ const heldPlan = targetY => planLauncherResize({
     target: {x: 0, y: targetY},
     surface: {x: 90, y: 8, width: 680, height: 900},
     sourceCenter: {x: 40, y: 300},
-    size: {columns: 6, gridWidth: 480, gridHeight: 540},
-    cellWidth: 80,
+    chrome,
 }).gridHeight;
-assert.equal(heldPlan(700), 540 + 692 - 900, 'while still held, only the dragged edge moves');
-assert.equal(heldPlan(560), 540 + 520 - 900,
-    'shrinking past the screen edge must recentre in one step');
+assert.equal(heldPlan(700), 692 - 240, 'while still held, only the dragged edge moves');
+assert.equal(heldPlan(560), 520 - 240, 'shrinking past the screen edge must recentre in one step');
