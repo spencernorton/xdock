@@ -4,6 +4,7 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Keep the dock magnified while an icon's menu is open, as the macOS Dock does, even when the pointer leaves the dock; the menu opens above the magnified icon, and the dock eases back to rest when the menu closes instead of snapping.
 - Leave a removed dock item alone when its pending hover label fires, instead of reaching the destroyed item and logging a critical error.
 - Keep the hover label steady over a magnifying icon: it no longer bounces up and down or wobbles sideways, stays centred on the icon and sits on whole pixels.
 - Resize the application launcher by dragging its edges. Width snaps to whole columns, the size is kept for the next time it opens and always fits the monitor, Escape abandons a drag, and a double-click on the edge restores the default size.

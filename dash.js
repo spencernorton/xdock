@@ -242,6 +242,7 @@ export const DockDash = GObject.registerClass({
         this._magnifyPointer = null;
         this._magnifyInfluence = 0;
         this._magnifyFreezes = new Set();
+        this._magnifyRebasePending = false;
         this._magnifyRest = null;
         this._magnifyTimeline = null;
         this._magnifyRebasing = false;
@@ -408,11 +409,13 @@ export const DockDash = GObject.registerClass({
                 this._queueRedisplay();
             });
         this.connect('notify::mapped', () => this._syncMagnify());
-        this.connect('menu-opened', () => {
-            this._magnifyFreezes.add('menu');
-            this._resetMagnify();
-        });
-        this.connect('menu-closed', () => this._magnifyFreezes.delete('menu'));
+        // An icon's menu holds the dock as it is, magnified or not, wherever
+        // the pointer goes; closing it lets the row follow the pointer again,
+        // easing back to rest if it has left the dock. This is how the macOS
+        // Dock treats its menus. The menu opens past the magnified icon
+        // (see DockAbstractAppIcon._clearMagnifiedIcon).
+        this.connect('menu-opened', () => this._holdMagnify('menu'));
+        this.connect('menu-closed', () => this._releaseMagnify('menu'));
         const rebaseMagnifyForIcon = (_box, child) => {
             // Redisplay temporarily removes the separator even when every
             // icon stays put. Only icon membership changes invalidate an
@@ -648,6 +651,7 @@ export const DockDash = GObject.registerClass({
 
     _resetMagnify() {
         const wasActive = this._magnifyInfluence > 0 || this._magnifyTimeline?.is_playing();
+        this._magnifyRebasePending = false;
         this._cancelMagnifyLayout();
         this._magnifyTimeline?.stop();
         this._magnifyRest = null;
@@ -663,7 +667,40 @@ export const DockDash = GObject.registerClass({
         }
     }
 
+    // Holds the row exactly as it is painted, including part-way through an
+    // approach: the frame clock stops, and pointer samples are ignored until
+    // the last hold is released.
+    _holdMagnify(reason) {
+        this._magnifyFreezes.add(reason);
+        this._magnifyTimeline?.stop();
+    }
+
+    _releaseMagnify(reason) {
+        if (!this._magnifyFreezes.delete(reason) || this._magnifyFreezes.size)
+            return;
+        if (this._magnifyRebasePending) {
+            this._magnifyRebasePending = false;
+            this._rebaseMagnify();
+            return;
+        }
+        // The pointer may not move again; sample where it is now. A dock
+        // that hid meanwhile has already released the cursor.
+        if (!this._magnifyCursorTracker)
+            return;
+        this._magnifyStageX = NaN;
+        this._magnifyStageY = NaN;
+        this._magnifyOnPointer();
+    }
+
     _rebaseMagnify() {
+        // A held, magnified row keeps its snapshot until it is released:
+        // dropping it here would leave the icons magnified with nothing to
+        // ease them back.
+        if (this._magnifyFreezes.size && !this._magnifyFreezes.has('drag') &&
+            this._magnifyInfluence > 0) {
+            this._magnifyRebasePending = true;
+            return;
+        }
         if (!this._magnifyCursorTracker || this._magnifyFreezes.size) {
             this._magnifyRest = null;
             return;
