@@ -4,6 +4,7 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Leave a removed dock item alone when its pending hover label fires, instead of reaching the destroyed item and logging a critical error.
 - Keep the hover label steady over a magnifying icon: it no longer bounces up and down or wobbles sideways, stays centred on the icon and sits on whole pixels.
 - Make the application launcher about half its former footprint while keeping readable text and normal-sized app icons.
 - Refine native popup easing and continue interrupted open/close animations from their current position.

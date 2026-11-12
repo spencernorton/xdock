@@ -158,6 +158,18 @@ export async function run() {
         check(JSON.stringify(global.settings.get_strv('favorite-apps')) === JSON.stringify(expectedOrder),
             'drop must move the favorite to the placeholder position');
         result.reorder = 'pass';
+
+        // Shell's dash can fire a pending show-label timeout at an item it has
+        // just removed; the label outlives its item until an idle. Showing or
+        // placing that label must leave the destroyed item alone: touching it
+        // is a critical, and this session treats criticals as fatal.
+        const removed = dash._box.get_children().find(item => item.child?.app && item.showLabel);
+        removed.destroy();
+        removed.showLabel();
+        removed.syncLabelPosition();
+        dash._queueRedisplay();
+        await wait(300);
+        result.labelAfterDestroy = 'pass';
         global.settings.set_strv('favorite-apps', ['xdock-popup-test-00.desktop']);
         await wait(500);
 

@@ -66,6 +66,7 @@ class DockDashItemContainer extends Dash.DashItemContainer {
         this.label?.add_style_class_name(Theming.PositionStyleClass[position]);
         if (Docking.DockManager.settings.customThemeShrink)
             this.label?.add_style_class_name('shrink');
+        AppIcons.trackItemDestroyed(this);
         this._magnifyScale = 1;
         this._magnifyHorizontal = position === St.Side.TOP || position === St.Side.BOTTOM;
     }
@@ -117,7 +118,7 @@ class DockDashItemContainer extends Dash.DashItemContainer {
     // Keeps a showing label on the magnified icon as it grows, shrinks and
     // is pushed along by its neighbours.
     syncLabelPosition() {
-        if (!this.label?.visible || !this._labelText || !this.has_allocation() ||
+        if (this._itemDestroyed || !this.label?.visible || !this._labelText || !this.has_allocation() ||
             !this.label.get_stage())
             return;
         const [x, y] = AppIcons.itemPlaceLabel.call(this);
