@@ -29,7 +29,6 @@ import {
 } from './dependencies/shell/misc.js';
 
 import {
-    MAX_VISIBLE_RESULTS,
     QUICK_ACCESS_COUNT,
     SIDEBAR_WIDTH,
     FOOTER_HEIGHT,
@@ -64,7 +63,9 @@ import {Extension} from './dependencies/shell/extensions/extension.js';
 
 const {gettext: __} = Extension;
 
-const MAX_CACHED_BUTTONS = MAX_VISIBLE_RESULTS * 2;
+// Buttons kept for apps not on screen. Every match is shown now, so this is a
+// memory bound for very large catalogs rather than a multiple of the result cap.
+const MAX_CACHED_BUTTONS = 256;
 const CLOSED_CACHE_DELAY = 3000;
 
 // The All Apps row's id. A Symbol rather than a string on purpose: drawer ids
@@ -374,6 +375,8 @@ export class AppGridLauncher {
         this._resize = null;
         this._resizeRequest = null;
         this._lastRimPress = null;
+        this._magnifyDash = null;
+        this._magnifyDashDestroyId = 0;
         this._iconSize = DEFAULT_ICON_SIZE;
         this._layoutDirty = true;
         this._rtl = null;
@@ -454,6 +457,10 @@ export class AppGridLauncher {
                 this._signalsHandler.add([
                     this._settings,
                     'changed::launcher-columns',
+                    () => this._onLayoutChanged(),
+                ], [
+                    this._settings,
+                    'changed::launcher-grid-width',
                     () => this._onLayoutChanged(),
                 ], [
                     this._settings,
@@ -1953,6 +1960,7 @@ export class AppGridLauncher {
     }
 
     _destroyMenu() {
+        this._releaseDockMagnify({immediately: true});
         this._stopSmoothScroll();
         this._cancelDragClose();
         this._resize = null;
@@ -2029,8 +2037,11 @@ export class AppGridLauncher {
     _onOpenStateChanged(isOpen) {
         if (isOpen) {
             this._cacheReleaseTask.cancel();
+            this._holdDockMagnify();
             return;
         }
+
+        this._releaseDockMagnify();
 
         this._stopSmoothScroll();
         this._hideHoverLabel({animate: false});
@@ -2102,18 +2113,16 @@ export class AppGridLauncher {
         // A drag in progress, else the size the last drag saved. Both are
         // fitted to this monitor, so a size saved on a large screen still
         // opens inside a small one.
-        const size = this._resizeRequest ?? {
-            columns: this._settings?.get_int('launcher-columns') ?? 0,
-            gridHeight: this._settings?.get_int('launcher-grid-height') ?? 0,
-        };
+        const size = this._resizeRequest ?? this._savedSize();
         const layout = computeGridLayout({
             workAreaWidth: workArea.width,
             workAreaHeight: workArea.height,
             textScale,
             sidebarWidth: SIDEBAR_WIDTH,
             chromeHeight: headerHeight + FOOTER_HEIGHT,
-            columns: size.columns,
+            gridWidth: size.gridWidth,
             gridHeight: size.gridHeight,
+            columns: size.columns,
         });
 
         const iconSizeChanged = this._iconSize !== layout.iconSize;
@@ -2262,7 +2271,8 @@ export class AppGridLauncher {
         this._hideHoverLabel({animate: false});
         this._stopSmoothScroll();
         // Where on the rim the pointer took hold, so the edge stays that far
-        // from it instead of jumping under it.
+        // from it instead of jumping under it; and how much of the popup lies
+        // around the results, measured while the layout is settled.
         const surface = this._resizeSurface();
         this._resize = {
             edge,
@@ -2271,14 +2281,23 @@ export class AppGridLauncher {
                 x: x - (edge.x > 0 ? surface.x + surface.width : surface.x),
                 y: y - (edge.y > 0 ? surface.y + surface.height : surface.y),
             },
-            start: {columns: this._columns, gridHeight: this._gridHeight},
+            chrome: {
+                width: surface.width - this._gridWidth,
+                height: surface.height - this._gridHeight,
+            },
+            start: {gridWidth: this._gridWidth, gridHeight: this._gridHeight},
             // The axis not being dragged keeps what was saved, including the
             // default (0): taking its current value would switch it to the
             // dragged-size rules mid-drag.
-            saved: {
-                columns: this._settings?.get_int('launcher-columns') ?? 0,
-                gridHeight: this._settings?.get_int('launcher-grid-height') ?? 0,
-            },
+            saved: this._savedSize(),
+        };
+    }
+
+    _savedSize() {
+        return {
+            gridWidth: this._settings?.get_int('launcher-grid-width') ?? 0,
+            gridHeight: this._settings?.get_int('launcher-grid-height') ?? 0,
+            columns: this._settings?.get_int('launcher-columns') ?? 0,
         };
     }
 
@@ -2290,7 +2309,7 @@ export class AppGridLauncher {
 
     _updateResize(event) {
         const [x, y] = event.get_coords();
-        const {edge, offset} = this._resize;
+        const {edge, offset, chrome, saved} = this._resize;
         const [sourceX, sourceY] = this._sourceButton.get_transformed_position();
         const [sourceWidth, sourceHeight] = this._sourceButton.get_transformed_size();
         const size = planLauncherResize({
@@ -2299,17 +2318,16 @@ export class AppGridLauncher {
             target: {x: x - offset.x, y: y - offset.y},
             surface: this._resizeSurface(),
             sourceCenter: {x: sourceX + sourceWidth / 2, y: sourceY + sourceHeight / 2},
-            size: {columns: this._columns, gridWidth: this._gridWidth, gridHeight: this._gridHeight},
-            cellWidth: this._cellWidth,
+            chrome,
         });
-        const {saved} = this._resize;
         const next = {
-            columns: edge.x ? size.columns : saved.columns,
-            gridHeight: edge.y ? size.gridHeight : saved.gridHeight,
+            gridWidth: size.gridWidth ?? saved.gridWidth,
+            gridHeight: size.gridHeight ?? saved.gridHeight,
+            columns: saved.columns,
         };
         const request = this._resizeRequest;
-        if (next.columns === request?.columns && next.gridHeight === request?.gridHeight ||
-            !request && size.columns === this._columns && size.gridHeight === this._gridHeight)
+        if (request && Math.round(next.gridWidth) === Math.round(request.gridWidth) &&
+            Math.round(next.gridHeight) === Math.round(request.gridHeight))
             return;
 
         this._resizeRequest = next;
@@ -2323,8 +2341,10 @@ export class AppGridLauncher {
         const {edge, start} = this._resize;
         this._resize = null;
         if (this._settings) {
-            if (edge.x && this._columns !== start.columns)
-                this._settings.set_int('launcher-columns', this._columns);
+            if (edge.x && this._gridWidth !== start.gridWidth) {
+                this._settings.set_int('launcher-grid-width', this._gridWidth);
+                this._settings.reset('launcher-columns');
+            }
             if (edge.y && this._gridHeight !== start.gridHeight)
                 this._settings.set_int('launcher-grid-height', this._gridHeight);
             this._resizeRequest = null;
@@ -2348,6 +2368,7 @@ export class AppGridLauncher {
     _resetSize() {
         this._resize = null;
         this._resizeRequest = null;
+        this._settings?.reset('launcher-grid-width');
         this._settings?.reset('launcher-columns');
         this._settings?.reset('launcher-grid-height');
         this._applyResize();
@@ -2360,6 +2381,35 @@ export class AppGridLauncher {
         // shows more or fewer rows of the same grid.
         if (this._layoutDirty)
             this._renderResults(this._entry.get_text());
+    }
+
+    // The launcher is anchored to its dock's Applications button, which moves
+    // whenever the dock's magnified row eases back to rest. The dock holds its
+    // magnification while the launcher is open, as it does for an icon's menu,
+    // and lets go only once the popup has faded out, so the popup stays put.
+    _holdDockMagnify() {
+        let dash = this._sourceButton;
+        while (dash && !dash.holdMagnify)
+            dash = dash.get_parent();
+        if (!dash || dash === this._magnifyDash)
+            return;
+        this._releaseDockMagnify({immediately: true});
+        this._magnifyDash = dash;
+        this._magnifyDashDestroyId = dash.connect('destroy', () => {
+            this._magnifyDash = null;
+            this._magnifyDashDestroyId = 0;
+        });
+        dash.holdMagnify(this);
+    }
+
+    _releaseDockMagnify({immediately = false} = {}) {
+        const dash = this._magnifyDash;
+        if (!dash)
+            return;
+        this._magnifyDash = null;
+        dash.disconnect(this._magnifyDashDestroyId);
+        this._magnifyDashDestroyId = 0;
+        dash.releaseMagnify(this, immediately ? [] : [this._menu?.actor]);
     }
 
     _stopSmoothScroll() {
@@ -2818,7 +2868,7 @@ export class AppGridLauncher {
         const source = !this._activeDrawerId && !searching
             ? this._quickAccessApps()
             : this._catalogForActiveDrawer();
-        const {items, total, truncated} = filterCatalog(source, query);
+        const {items, total} = filterCatalog(source, query);
         const nextIds = items.map(entry => entry.id);
         const visibleIds = this._visibleButtons.map(button => button._app.get_id());
         const sameResults = nextIds.length === visibleIds.length &&
@@ -2876,7 +2926,7 @@ export class AppGridLauncher {
             else
                 this._entry.grab_key_focus();
         }
-        this._updateStatus(total, items.length, truncated);
+        this._updateStatus(total);
     }
 
     // Membership is read fresh rather than cached: the store is shared with
@@ -3027,30 +3077,21 @@ export class AppGridLauncher {
 
     /**
      * The status line is deliberately blank for an ordinary result set: a
-     * running count of the apps you are already looking at is noise.
+     * running count of the apps you are already looking at is noise, and every
+     * match is shown, so there is no "Showing N of M" to report either.
      *
      * The label itself stays, and is not merely decoration. It is the only
-     * surface the popup has for three things that are NOT the count:
+     * surface the popup has for two things that are NOT a count:
      *
      * - validation failures from drawer creation and deletion, via
      *   _updateStatusText();
      * - the empty state, so a query that matches nothing reads as "no matches"
-     *   rather than as a broken popup;
-     * - the truncation notice. filterCatalog() renders at most
-     *   MAX_VISIBLE_RESULTS, and without this line a capped list gives no
-     *   indication at all that there are more apps than are on screen.
+     *   rather than as a broken popup.
      *
      * @param {number} total apps matching the query
-     * @param {number} visible apps actually rendered
-     * @param {boolean} truncated whether the render was capped
      */
-    _updateStatus(total, visible, truncated) {
-        let status = '';
-        if (total === 0)
-            status = __('No applications found');
-        else if (truncated)
-            status = __('Showing %d of %d applications').format(visible, total);
-
+    _updateStatus(total) {
+        const status = total === 0 ? __('No applications found') : '';
         this._statusLabel.text = status;
         // Updating the accessible name on a STATUSBAR actor emits the ATK name
         // change screen readers announce. An empty string is correct here: it

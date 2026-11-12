@@ -4,10 +4,12 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
-- Keep the dock magnified while an icon's menu is open, as the macOS Dock does, even when the pointer leaves the dock; the menu opens above the magnified icon, and the dock eases back to rest when the menu closes instead of snapping.
+- Keep the application launcher still while it is open and while it closes: the dock holds its magnification until the launcher has faded out, so the launcher no longer slides or shakes as the dock eases back.
+- Show every app in the launcher's All Apps view and searches, without the "Showing N of M" line.
+- Keep the dock magnified while an icon's menu is open, as the macOS Dock does, even when the pointer leaves the dock; the menu opens above the magnified icon, and the dock eases back to rest once the menu has closed, so the menu does not slide as it fades.
 - Leave a removed dock item alone when its pending hover label fires, instead of reaching the destroyed item and logging a critical error.
 - Keep the hover label steady over a magnifying icon: it no longer bounces up and down or wobbles sideways, stays centred on the icon and sits on whole pixels.
-- Resize the application launcher by dragging its edges. Width snaps to whole columns, the size is kept for the next time it opens and always fits the monitor, Escape abandons a drag, and a double-click on the edge restores the default size.
+- Resize the application launcher by dragging its edges. The edge follows the pointer smoothly, the apps reflow into as many columns as fit, the size is kept for the next time it opens and always fits the monitor, Escape abandons a drag, and a double-click on the edge restores the default size.
 - Make the application launcher about half its former footprint while keeping readable text and normal-sized app icons.
 - Refine native popup easing and continue interrupted open/close animations from their current position.
 - Exercise launcher motion, reduced motion and scrolling in the native tests on both supported GNOME Shell versions.

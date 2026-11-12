@@ -179,6 +179,11 @@ export async function run() {
             launcher._entry.set_text('Popup Test');
             await wait(200);
             check(launcher._visibleButtons.length >= 60, '60 private test applications required');
+            // Every match is shown, with no "Showing N of M" line under them.
+            check(launcher._visibleButtons.length === 80,
+                `all 80 matching applications must be shown: ${launcher._visibleButtons.length}`);
+            check(launcher._statusLabel.text === '',
+                `an ordinary result set has no status line: ${launcher._statusLabel.text}`);
         };
         await open();
         const helper = launcher._menu.box.get_children()

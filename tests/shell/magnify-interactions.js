@@ -5,6 +5,7 @@ import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 
+import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const wait = ms => new Promise(resolve => {
@@ -176,6 +177,39 @@ async function checkRenderedRow(dash, settings, icons, move, center) {
         indicatorIcon.running = savedRunning;
         settings.set_enum('running-indicator-style', savedStyle);
     }
+}
+
+// Close a popup and watch it fade out: how far it moves while still visible,
+// whether `scale` holds until it has gone, and the steps it eases back by after.
+// A popup's laid-out position: what its anchor moves, as opposed to the
+// translation and scale of its own open and close animation.
+function anchored(actor) {
+    const box = actor.get_allocation_box();
+    return [box.x1, box.y1];
+}
+
+async function observeClose(actor, close, scale) {
+    const [startX, startY] = anchored(actor);
+    const heldScale = scale();
+    let drift = 0;
+    let closingFrames = 0;
+    let heldWhileClosing = true;
+    const eased = new Set();
+    const id = global.stage.connect('after-paint', () => {
+        if (actor.visible) {
+            closingFrames++;
+            const [x, y] = anchored(actor);
+            drift = Math.max(drift, Math.hypot(x - startX, y - startY));
+            heldWhileClosing &&= Math.abs(scale() - heldScale) < 0.01;
+        } else {
+            eased.add(Math.round(scale() * 100));
+        }
+    });
+    close();
+    await wait(900);
+    global.stage.disconnect(id);
+    const between = [...eased].filter(value => value > 100 && value < Math.round(heldScale * 100));
+    return {drift, closingFrames, heldWhileClosing, easedFrames: between.length, eased: [...eased]};
 }
 
 export async function run() {
@@ -361,17 +395,44 @@ export async function run() {
         const menuBottom = menuY + menu.actor.get_allocation_box().get_height();
         check(menuBottom <= cloneTop + 0.5,
             `the menu must open past the magnified icon: menu ends ${menuBottom}, icon starts ${cloneTop}`);
-        const easing = new Set();
-        const sampler = global.stage.connect('after-paint',
-            () => easing.add(Math.round(binScale(icons[2]) * 100)));
-        menu.close();
-        await wait(800);
-        global.stage.disconnect(sampler);
+        // The menu fades out where it is: the row stays held until the menu
+        // has gone, and only then eases back.
+        const closingMenu = await observeClose(menu.actor, () => menu.close(BoxPointer.PopupAnimation.FULL),
+            () => binScale(icons[2]));
+        check(closingMenu.closingFrames >= 3, 'the menu must fade out over several frames');
+        check(closingMenu.drift <= 0.5, `a closing menu must not move: ${closingMenu.drift}px`);
+        check(closingMenu.heldWhileClosing, 'the row must stay held until the menu has gone');
         check(icons.every(icon => binScale(icon) === 1),
             'closing the menu away from the dock must settle the row at rest');
-        const between = [...easing].filter(value => value > 100 && value < Math.round(held[2] * 100));
-        check(between.length >= 3, `the row must ease back after the menu, not snap: ${[...easing]}`);
-        result.menuHold = {clearance: Math.round(cloneTop - menuBottom), easedFrames: between.length};
+        check(closingMenu.easedFrames >= 3,
+            `the row must ease back after the menu, not snap: ${closingMenu.eased}`);
+        result.menuHold = {clearance: Math.round(cloneTop - menuBottom), easedFrames: closingMenu.easedFrames};
+        move(px, py);
+        await wait(800);
+
+        // The launcher is anchored to the Applications button, which moves as
+        // the row eases back. The dock holds its magnification while the
+        // launcher is open and until it has faded out, so it stays put.
+        const launcher = DockManager.getDefault()._appLauncher;
+        const peakBefore = binScale(icons[2]);
+        check(peakBefore > 1.45, 'the launcher fixture must start magnified');
+        check(launcher.open(dash.showAppsButton), 'the launcher must open');
+        await wait(400);
+        const launcherAt = anchored(launcher._menu.actor);
+        move(100, 100);
+        await wait(500);
+        const launcherMoved = anchored(launcher._menu.actor);
+        check(Math.abs(binScale(icons[2]) - peakBefore) < 0.01,
+            `the row must hold while the launcher is open: ${binScale(icons[2])}`);
+        check(Math.hypot(launcherMoved[0] - launcherAt[0], launcherMoved[1] - launcherAt[1]) <= 0.5,
+            'the launcher must stay put while the pointer leaves the dock');
+        const closingLauncher = await observeClose(launcher._menu.actor, () => launcher.close(),
+            () => binScale(icons[2]));
+        check(closingLauncher.drift <= 0.5, `a closing launcher must not move: ${closingLauncher.drift}px`);
+        check(closingLauncher.heldWhileClosing, 'the row must stay held until the launcher has gone');
+        check(icons.every(icon => binScale(icon) === 1), 'the row must settle at rest after the launcher');
+        check(closingLauncher.easedFrames >= 3, `the row must ease back after the launcher: ${closingLauncher.eased}`);
+        result.launcherHold = {easedFrames: closingLauncher.easedFrames};
         move(px, py);
         await wait(800);
 

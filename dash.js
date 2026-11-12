@@ -410,12 +410,12 @@ export const DockDash = GObject.registerClass({
             });
         this.connect('notify::mapped', () => this._syncMagnify());
         // An icon's menu holds the dock as it is, magnified or not, wherever
-        // the pointer goes; closing it lets the row follow the pointer again,
-        // easing back to rest if it has left the dock. This is how the macOS
-        // Dock treats its menus. The menu opens past the magnified icon
-        // (see DockAbstractAppIcon._clearMagnifiedIcon).
-        this.connect('menu-opened', () => this._holdMagnify('menu'));
-        this.connect('menu-closed', () => this._releaseMagnify('menu'));
+        // the pointer goes; once it has closed the row follows the pointer
+        // again, easing back to rest if it has left the dock. This is how the
+        // macOS Dock treats its menus. The menu opens past the magnified icon
+        // (see DockAbstractAppIcon._clearMagnifiedIcon). The launcher holds
+        // the dock the same way (appLauncher.js).
+        this._magnifyReleases = new Map();
         const rebaseMagnifyForIcon = (_box, child) => {
             // Redisplay temporarily removes the separator even when every
             // icon stays put. Only icon membership changes invalidate an
@@ -461,6 +461,7 @@ export const DockDash = GObject.registerClass({
     }
 
     _onDestroy() {
+        [...this._magnifyReleases.values()].forEach(cancel => cancel());
         this._magnifyVisible = false;
         this._disconnectMagnifyCursor();
         this._cancelMagnifyLayout();
@@ -670,9 +671,52 @@ export const DockDash = GObject.registerClass({
     // Holds the row exactly as it is painted, including part-way through an
     // approach: the frame clock stops, and pointer samples are ignored until
     // the last hold is released.
-    _holdMagnify(reason) {
+    /**
+     * Hold the row exactly as it is painted, including part-way through an
+     * approach: the frame clock stops and pointer samples are ignored until
+     * every hold is released.
+     *
+     * @param {*} reason identifies the hold, such as the popup that took it
+     */
+    holdMagnify(reason) {
+        this._magnifyReleases.get(reason)?.();
         this._magnifyFreezes.add(reason);
         this._magnifyTimeline?.stop();
+    }
+
+    /**
+     * Release a hold once `popups` have finished hiding. A popup is anchored
+     * to the dock, so a row easing back under one that is still fading out
+     * would carry it along, and it shakes as it tries to follow.
+     *
+     * @param {*} reason the hold to release
+     * @param {Clutter.Actor[]} popups actors that may still be closing
+     */
+    releaseMagnify(reason, popups = []) {
+        this._magnifyReleases.get(reason)?.();
+        const closing = popups.filter(actor => actor?.visible);
+        if (!closing.length) {
+            this._releaseMagnify(reason);
+            return;
+        }
+        const token = {};
+        const settle = () => {
+            if (closing.some(actor => actor.visible))
+                return;
+            cancel();
+            this._releaseMagnify(reason);
+        };
+        const cancel = () => {
+            closing.forEach(actor => actor.disconnectObject(token));
+            this._magnifyReleases.delete(reason);
+        };
+        closing.forEach(actor => actor.connectObject(
+            'notify::visible', settle,
+            'destroy', () => {
+                cancel();
+                this._releaseMagnify(reason);
+            }, token));
+        this._magnifyReleases.set(reason, cancel);
     }
 
     _releaseMagnify(reason) {
@@ -1135,6 +1179,14 @@ export const DockDash = GObject.registerClass({
 
     _itemMenuStateChanged(item, opened) {
         Dash.Dash.prototype._itemMenuStateChanged?.call(this, item, opened);
+
+        if (opened) {
+            this.holdMagnify(item);
+        } else {
+            const icon = item.child;
+            this.releaseMagnify(item,
+                [item._menu?.actor, icon?._menu?.actor, icon?._previewMenu?.actor]);
+        }
 
         if (opened) {
             this.emit('menu-opened');
