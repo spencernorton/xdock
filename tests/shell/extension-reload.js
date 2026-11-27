@@ -62,7 +62,9 @@ export async function checkExtensionReload(xdock, wait) {
                 throw new Error('The overlapping reload did not restore the dock');
         }
         resume();
-        await until(() => first.state === 2 && second.state === 2, 'The extension reloads did not settle');
+        await until(() => first.state === 2, 'The first extension reload did not finish');
+        if (shell._enableExtensionMutex)
+            await until(() => second.state === 2, 'The queued extension reload did not finish');
         const manager = module.dockManager;
         const actors = dockActors();
         const [actor] = actors;
