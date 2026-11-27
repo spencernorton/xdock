@@ -2,12 +2,19 @@
 
 import {DockManager} from './docking.js';
 import {Extension} from './dependencies/shell/extensions/extension.js';
+import {Main} from './dependencies/shell/ui.js';
 
 // We export this so it can be accessed by other extensions
 export let dockManager;
 
 export default class XDockExtension extends Extension.Extension {
     enable() {
+        // Shell can resume an older extension-order reload after another
+        // reload has restored this dock or the user has disabled it.
+        if (dockManager?.extension === this ||
+            Main.extensionManager.lookup(this.uuid)?.enabled === false)
+            return;
+
         const manager = new DockManager(this, {
             onFailClosed: failedManager => {
                 // A runtime capability loss destroys its manager before GNOME
@@ -22,6 +29,8 @@ export default class XDockExtension extends Extension.Extension {
 
     disable() {
         const manager = dockManager;
+        if (manager?.extension !== this)
+            return;
         try {
             manager?.destroy();
         } finally {

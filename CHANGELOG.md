@@ -4,6 +4,10 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+## 2.4.0 — 2026-11-26
+
+- Keep one dock when GNOME Shell reloads several extensions at once, and respect the user's choice to disable the dock during a reload.
+
 - Keep the application launcher still while it is open and while it closes: the dock holds its magnification until the launcher has faded out, so the launcher no longer slides or shakes as the dock eases back.
 - Show every app in the launcher's All Apps view and searches, without the "Showing N of M" line.
 - Keep the dock magnified while an icon's menu is open, as the macOS Dock does, even when the pointer leaves the dock; the menu opens above the magnified icon, and the dock eases back to rest once the menu has closed, so the menu does not slide as it fades.
