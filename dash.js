@@ -96,6 +96,8 @@ class DockDashItemContainer extends Dash.DashItemContainer {
             this.translation_x = value;
         else
             this.translation_y = value;
+        if (this.label?.visible)
+            this.syncLabelPosition();
     }
 
     vfunc_get_preferred_width(forHeight) {

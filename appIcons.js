@@ -418,8 +418,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
         this._magnifyScale = scale;
         if (scale > 1 && !this._floatLayer)
             this._ensureFloat();
-        else
-            this._syncFloat(false);
+        this._syncFloat(false);
     }
 
     _ensureFloat() {
