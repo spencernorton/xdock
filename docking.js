@@ -29,6 +29,7 @@ import {
 } from './dependencies/shell/misc.js';
 
 import {
+    AppIcons,
     AppIconsDecorator,
     AppLauncher,
     AppSpread,

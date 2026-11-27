@@ -2,7 +2,6 @@
 
 import {
     Clutter,
-    Gio,
     GLib,
     GObject,
     Shell,
