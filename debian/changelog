@@ -1,8 +1,8 @@
 gnome-shell-extension-xdock (2.4.0) resolute; urgency=medium
 
-  * Keep the dock's enabled state consistent during overlapping extension reloads.
-  * Allow resizing the application launcher and show all matching applications.
-  * Stabilize magnification, hover labels and popup motion while menus are open.
+  * Respect the dock's enabled state during overlapping extension reloads.
+  * Resize the application launcher and show all matching applications.
+  * Stabilize magnification, hover labels and popup motion during menu use.
 
  -- Norvi <apt@globalentry.systems>  Thu, 26 Nov 2026 18:00:00 +0000
 

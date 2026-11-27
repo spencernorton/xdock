@@ -29,7 +29,7 @@ export default class XDockExtension extends Extension.Extension {
 
     disable() {
         const manager = dockManager;
-        if (manager?.extension !== this)
+        if (manager?.extension && manager.extension !== this)
             return;
         try {
             manager?.destroy();

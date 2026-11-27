@@ -63,6 +63,14 @@ export async function checkExtensionReload(xdock, wait) {
         xdock.stateObj.disable.call(Object.create(xdock.stateObj));
         if (module.dockManager !== manager || dockActors()[0] !== actor)
             throw new Error('An obsolete extension instance destroyed the live dock');
+
+        // Other extensions can reach the exported manager. Even if it has
+        // already been destroyed, a normal disable must clear that export.
+        manager.destroy();
+        shell.disableExtension(xdock.uuid);
+        await until(() => xdock.state === 2, 'XDock did not finish teardown');
+        if (module.dockManager || dockActors().length)
+            throw new Error('Teardown retained an already destroyed manager');
     } finally {
         gate.onEnable = null;
         resume?.();
