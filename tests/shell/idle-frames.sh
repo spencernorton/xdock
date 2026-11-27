@@ -23,6 +23,14 @@ else
     unzip -q "$extension" -d "$installed/xdock@spencercnorton.github.io"
 fi
 cp -r "$probe" "$installed/"
+for name in first second gate; do
+    uuid="reload-$name@xdock.test"
+    mkdir "$installed/$uuid"
+    cp "$(dirname "$0")/reload-peer.js" "$installed/$uuid/extension.js"
+    printf '{"uuid":"%s","name":"Reload test peer","description":"Disposable peer","shell-version":["50","51"]}\n' \
+        "$uuid" > "$installed/$uuid/metadata.json"
+done
+cp "$(dirname "$0")/extension-reload.js" "$installed/"
 cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
     "$(dirname "$0")/icon-refresh.js" "$(dirname "$0")/dwell-interactions.js" \
     "$(dirname "$0")/launcher-scrolling.js" "$(dirname "$0")/launcher-motion.js" \

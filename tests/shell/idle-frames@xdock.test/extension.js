@@ -15,6 +15,7 @@ import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {checkExtensionReload} from '../extension-reload.js';
 import {run as dwellInteractions} from '../dwell-interactions.js';
 import {run as popupInteractions} from '../popup-interactions.js';
 import {run as magnifyInteractions} from '../magnify-interactions.js';
@@ -197,6 +198,8 @@ export default class IdleFramesProbe extends Extension {
         if (Main.extensionManager.lookup(XDOCK)?.state !== 1)
             throw new Error('XDock did not survive rapid disable/re-enable');
         report('rapid lifecycle', '3 cycles');
+        await checkExtensionReload(xdock, wait);
+        report('overlapping extension reloads', 'one dock');
         report('result', failed ? 'fail' : 'pass');
     }
 }
