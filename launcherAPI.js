@@ -20,6 +20,14 @@ export class LauncherEntryRemoteModel {
                 (_connection, senderName, _objectPath, _interfaceName, _signalName, parameters) =>
                     this._onUpdate(senderName, ...parameters.deep_unpack()));
 
+        this._dbus_name_owner_changed_signal_id = 0;
+
+        this._acquireUnityDBus();
+    }
+
+    _ensureNameOwnerWatch() {
+        if (this._dbus_name_owner_changed_signal_id)
+            return;
         this._dbus_name_owner_changed_signal_id =
             Gio.DBus.session.signal_subscribe('org.freedesktop.DBus',  // sender
                 'org.freedesktop.DBus',  // interface
@@ -27,19 +35,22 @@ export class LauncherEntryRemoteModel {
                 '/org/freedesktop/DBus', // path
                 null,                    // arg0
                 Gio.DBusSignalFlags.NONE,
-                (connection, _senderName, _objectPath, _interfaceName, _signalName, parameters) =>
+                (_connection, _senderName, _objectPath, _interfaceName, _signalName, parameters) =>
                     this._onDBusNameChange(...parameters.deep_unpack().slice(1)));
+    }
 
-        this._acquireUnityDBus();
+    _clearNameOwnerWatch() {
+        if (!this._dbus_name_owner_changed_signal_id)
+            return;
+        Gio.DBus.session.signal_unsubscribe(this._dbus_name_owner_changed_signal_id);
+        this._dbus_name_owner_changed_signal_id = 0;
     }
 
     destroy() {
         if (this._launcher_entry_dbus_signal_id)
             Gio.DBus.session.signal_unsubscribe(this._launcher_entry_dbus_signal_id);
 
-
-        if (this._dbus_name_owner_changed_signal_id)
-            Gio.DBus.session.signal_unsubscribe(this._dbus_name_owner_changed_signal_id);
+        this._clearNameOwnerWatch();
 
 
         // Drop the per-app quicklist DBusMenu.Client proxies and their
@@ -127,8 +138,12 @@ export class LauncherEntryRemoteModel {
                 if (changed)
                     sourceStack.target._emitChangedEvents(changed);
                 this._disposeQuicklistClient(remote);
+                if (sourceStack.isEmpty && !sourceStack.target.hasListeners)
+                    this._entrySourceStacks.delete(appId);
             }
         }
+        if (!this._remoteMaps.size)
+            this._clearNameOwnerWatch();
     }
 
     _onUpdate(senderName, appUri, properties) {
@@ -142,8 +157,10 @@ export class LauncherEntryRemoteModel {
 
 
         let remoteMap = this._remoteMaps.get(senderName);
-        if (!remoteMap)
+        if (!remoteMap) {
             this._remoteMaps.set(senderName, remoteMap = new Map());
+            this._ensureNameOwnerWatch();
+        }
 
         let remote = remoteMap.get(appId);
         if (!remote)
@@ -246,6 +263,10 @@ const LauncherEntry = class XDockLauncherEntry {
         });
     }
 
+    get hasListeners() {
+        return this._connections.size > 0;
+    }
+
     _emitChangedEvents(propertyNames) {
         const handlers = new Set();
         propertyNames.forEach(name => {
@@ -279,6 +300,10 @@ const PropertySourceStack = class XDockPropertySourceStack {
         this.target = target;
         this._bottom = bottom;
         this._stack = [];
+    }
+
+    get isEmpty() {
+        return this._stack.length === 0;
     }
 
     isTop(source) {

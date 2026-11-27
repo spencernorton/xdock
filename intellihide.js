@@ -92,6 +92,20 @@ export class Intellihide {
             Utils.getMonitorManager(),
             'monitors-changed',
             this._checkOverlap.bind(this),
+        ], [
+            global.display,
+            'window-entered-monitor',
+            (_dpy, monitorIndex) => {
+                if (monitorIndex === this._monitorIndex)
+                    this._checkOverlap();
+            },
+        ], [
+            global.display,
+            'window-left-monitor',
+            (_dpy, monitorIndex) => {
+                if (monitorIndex === this._monitorIndex)
+                    this._checkOverlap();
+            },
         ]);
         for (const wa of global.get_window_actors())
             this._addWindowSignals(wa);
@@ -122,7 +136,10 @@ export class Intellihide {
             return;
 
         this._trackedWindows.set(wa, [
-            wa.connect('notify::allocation', () => this._checkOverlap()),
+            wa.connect('notify::allocation', () => {
+                if (wa.get_meta_window()?.get_monitor() === this._monitorIndex)
+                    this._checkOverlap();
+            }),
             wa.connect('destroy', () => this._removeWindowSignals(wa)),
         ]);
     }

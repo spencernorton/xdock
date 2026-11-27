@@ -103,6 +103,10 @@ export class DesktopIconsUsableAreaClass {
      * @param {int} right Right margin in pixels
      */
     setMargins(monitor, top, bottom, left, right) {
+        const prev = this._margins?.[monitor];
+        if (prev && prev.top === top && prev.bottom === bottom &&
+            prev.left === left && prev.right === right)
+            return;
         this._margins[monitor] = {
             top,
             bottom,

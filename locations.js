@@ -805,6 +805,10 @@ const TrashAppInfo = GObject.registerClass({
             'empty', 'empty', 'empty',
             GObject.ParamFlags.READWRITE,
             true),
+        'item-count': GObject.ParamSpec.uint(
+            'item-count', 'item-count', 'item-count',
+            GObject.ParamFlags.READWRITE,
+            0, GLib.MAXUINT32, 0),
     },
 },
 class TrashAppInfo extends LocationAppInfo {
@@ -864,6 +868,8 @@ class TrashAppInfo extends LocationAppInfo {
     get_action_name(action) {
         switch (action) {
         case 'empty-trash':
+            if (this.item_count > 0)
+                return __('Empty Trash (%d)').format(this.item_count);
             return __('Empty Trash');
         default:
             return null;
@@ -905,8 +911,10 @@ class TrashAppInfo extends LocationAppInfo {
                     Gio.FileQueryInfoFlags.NONE,
                     priority, cancellable);
                 if (!cancellable.is_cancelled()) {
-                    this.empty = !trashInfo.get_attribute_uint32(
+                    const count = trashInfo.get_attribute_uint32(
                         Gio.FILE_ATTRIBUTE_TRASH_ITEM_COUNT);
+                    this.item_count = count;
+                    this.empty = count === 0;
                 }
                 return;
             } catch (e) {
@@ -921,10 +929,12 @@ class TrashAppInfo extends LocationAppInfo {
             childrenEnumerator = await location.enumerate_children_async(
                 Gio.FILE_ATTRIBUTE_STANDARD_TYPE, Gio.FileQueryInfoFlags.NONE,
                 priority, cancellable);
-            const children = await childrenEnumerator.next_files_async(1,
+            const children = await childrenEnumerator.next_files_async(100,
                 priority, cancellable);
-            if (!cancellable.is_cancelled())
+            if (!cancellable.is_cancelled()) {
+                this.item_count = children.length;
                 this.empty = !children.length;
+            }
         } catch (e) {
             if (!cancellable.is_cancelled() &&
                 !e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
@@ -1600,10 +1610,15 @@ function getApps() {
     return locationApps;
 }
 
+const EMPTY_APPS = Object.freeze([]);
+
 /**
  *
  */
 export function getRunningApps() {
+    const dockManager = Docking.DockManager.getDefault();
+    if (!dockManager?.fm1Client?.hasWindows)
+        return EMPTY_APPS;
     return getApps().filter(a => a.state === Shell.AppState.RUNNING);
 }
 

@@ -109,6 +109,16 @@ let recentlyClickedAppWindows = null;
 let recentlyClickedAppIndex = 0;
 let recentlyClickedAppMonitor = -1;
 
+export function resetRecentlyClickedApp() {
+    if (recentlyClickedAppLoopId > 0)
+        GLib.source_remove(recentlyClickedAppLoopId);
+    recentlyClickedAppLoopId = 0;
+    recentlyClickedApp = null;
+    recentlyClickedAppWindows = null;
+    recentlyClickedAppIndex = 0;
+    recentlyClickedAppMonitor = -1;
+}
+
 /**
  * Extend AppIcon
  *
@@ -435,26 +445,25 @@ export const DockAbstractAppIcon = GObject.registerClass({
         this._floatClone.connectObject(
             'notify::translation-x', sync,
             'notify::translation-y', sync, this);
-        // The chain can only reach the stage once the icon is in the dock.
-        this.connectObject('notify::mapped', () => this._connectFloatChain(), this);
-        this._connectFloatChain();
+        // Tear down any active float when unmapped; ancestor signals are
+        // connected lazily only while the clone is actually floating.
+        this.connectObject('notify::mapped', () => {
+            if (!this.mapped && this._floatLayer?.visible)
+                this._syncFloat();
+        }, this);
         return this._floatLayer;
     }
 
     // The copy follows the bin through every layout change between it and the
     // ui group: magnification widening its neighbours, the dock re-centring
-    // as it grows, the dock sliding in and out. Allocation notifications fire
-    // inside the layout pass, so the position is current for the frame being
-    // painted rather than one frame late (the earlier BEFORE_REDRAW hook ran
-    // before relayout and left every clone where the previous frame had it).
+    // as it grows, the dock sliding in and out. Connected only while floating
+    // so resting icons hold zero ancestor listeners.
     _connectFloatChain() {
         this._disconnectFloatChain();
         const iconBin = this.icon?._iconBin;
         const sync = () => {
             if (this._floatLayer?.visible)
                 this._syncFloat();
-            else
-                this.get_parent()?.syncLabelPosition?.();
         };
         for (let actor = iconBin; actor && actor !== Main.uiGroup; actor = actor.get_parent()) {
             actor.connectObject(
@@ -464,7 +473,6 @@ export const DockAbstractAppIcon = GObject.registerClass({
                 'notify::scale-x', sync, this._floatChainToken);
             this._floatChain.push(actor);
         }
-        this._syncFloat();
     }
 
     _disconnectFloatChain() {
@@ -502,8 +510,12 @@ export const DockAbstractAppIcon = GObject.registerClass({
         if (floating && (visibilityChanged || (updatePosition && iconBin.has_allocation())))
             this._syncFloatPosition(iconBin);
         if (visibilityChanged) {
-            if (floating)
+            if (floating) {
+                this._connectFloatChain();
                 this._stackFloat();
+            } else {
+                this._disconnectFloatChain();
+            }
             layer.visible = floating;
             // Hides the bin and its tile background together; the background
             // left in the dock would read as an empty slot under the floating
@@ -524,9 +536,11 @@ export const DockAbstractAppIcon = GObject.registerClass({
             if (this._floatRenderX !== x || this._floatRenderY !== y) {
                 this._floatRenderX = x;
                 this._floatRenderY = y;
-                const transform = new Graphene.Matrix();
-                transform.init_translate(new Graphene.Point3D({x, y, z: 0}));
-                layer.set_transform(transform);
+                this._floatTransform ??= new Graphene.Matrix();
+                this._floatPoint ??= new Graphene.Point3D();
+                this._floatPoint.init(x, y, 0);
+                this._floatTransform.init_translate(this._floatPoint);
+                layer.set_transform(this._floatTransform);
             }
         }
         if (floating || visibilityChanged)
@@ -583,6 +597,11 @@ export const DockAbstractAppIcon = GObject.registerClass({
     _onDestroy() {
         super._onDestroy();
 
+        if (this._optionalScrollCycleWindowsDeadTimeId) {
+            GLib.source_remove(this._optionalScrollCycleWindowsDeadTimeId);
+            this._optionalScrollCycleWindowsDeadTimeId = 0;
+        }
+
         // This is necessary due to an upstream bug
         // https://bugzilla.gnome.org/show_bug.cgi?id=757556
         // It can be safely removed once it get solved upstream.
@@ -618,6 +637,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
             this._optionalScrollCycleWindowsDeadTimeId = GLib.timeout_add(
                 GLib.PRIORITY_DEFAULT, 250, () => {
                     this._optionalScrollCycleWindowsDeadTimeId = 0;
+                    return GLib.SOURCE_REMOVE;
                 });
         }
 

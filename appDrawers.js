@@ -55,9 +55,11 @@ function gridFolderIcon(id) {
 export class DrawerStore {
     constructor() {
         this._settings = new Gio.Settings({schema_id: FOLDERS_SCHEMA});
+        this._folderSettingsCache = new Map();
     }
 
     destroy() {
+        this._folderSettingsCache.clear();
         this._settings = null;
     }
 
@@ -66,10 +68,15 @@ export class DrawerStore {
     }
 
     _folderSettings(id) {
-        return new Gio.Settings({
-            schema_id: FOLDER_SCHEMA,
-            path: `${FOLDER_PATH}${id}/`,
-        });
+        let folder = this._folderSettingsCache.get(id);
+        if (!folder) {
+            folder = new Gio.Settings({
+                schema_id: FOLDER_SCHEMA,
+                path: `${FOLDER_PATH}${id}/`,
+            });
+            this._folderSettingsCache.set(id, folder);
+        }
+        return folder;
     }
 
     _snapshot(id) {
