@@ -30,11 +30,19 @@ function fixture() {
         },
         Gio: {
             DBus: {session: {}}, IOErrorEnum: {CANCELLED: 1},
+            DBusProxyFlags: {
+                DO_NOT_AUTO_START: 1 << 2,
+                DO_NOT_AUTO_START_AT_CONSTRUCTION: 1 << 4,
+            },
             Cancellable: class {
                 cancel() { cancellations++; onCancel?.(); }
             },
             DBusProxy: {makeProxyWrapper: () => class {
-                constructor(_bus, _name, _path, callback) { ready.push(() => callback(this, null)); }
+                constructor(_bus, _name, _path, callback, _cancellable, flags) {
+                    this.g_name_owner = ':1.99';
+                    this.proxyFlags = flags;
+                    ready.push(() => callback(this, null));
+                }
                 get_cached_property_names() { return []; }
             }},
         },

@@ -31,6 +31,8 @@ export class FileManager1Client {
 
         this._windowsByPath = new Map();
         this._windowsByLocation = new Map();
+        const proxyFlags = Gio.DBusProxyFlags.DO_NOT_AUTO_START |
+            Gio.DBusProxyFlags.DO_NOT_AUTO_START_AT_CONSTRUCTION;
         this._proxy = new FileManager1Proxy(Gio.DBus.session,
             'org.freedesktop.FileManager1',
             '/org/freedesktop/FileManager1',
@@ -44,16 +46,20 @@ export class FileManager1Client {
                 if (error) {
                     if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                         logError(error);
-                } else {
+                } else if (this._proxy?.g_name_owner) {
                     this._updateWindows();
                     this._updateLocationMap();
                 }
-            }, this._cancellable);
+            }, this._cancellable, proxyFlags);
 
         this._signalsHandler.add([
             this._proxy,
             'g-properties-changed',
             this._onPropertyChanged.bind(this),
+        ], [
+            this._proxy,
+            'notify::g-name-owner',
+            this._onNameOwnerChanged.bind(this),
         ], [
             // We must additionally listen for Screen events to know when to
             // rebuild our location map when the set of available windows changes.
@@ -73,6 +79,23 @@ export class FileManager1Client {
             'window-left-monitor',
             () => this._onWindowsChanged(),
         ]);
+    }
+
+    get hasWindows() {
+        return this._windowsByLocation.size > 0;
+    }
+
+    _onNameOwnerChanged() {
+        if (this._destroyed)
+            return;
+        if (this._proxy?.g_name_owner) {
+            this._updateWindows();
+            this._updateLocationMap();
+        } else if (this._windowsByLocation.size > 0 || this._windowsByPath.size > 0) {
+            this._windowsByLocation.clear();
+            this._windowsByPath.clear();
+            this.emit('windows-changed');
+        }
     }
 
     destroy() {
@@ -128,7 +151,7 @@ export class FileManager1Client {
     }
 
     _onWindowsChanged() {
-        if (this._destroyed || this._windowsUpdateIdle)
+        if (this._destroyed || this._windowsUpdateIdle || !this._proxy?.g_name_owner)
             return;
 
         this._windowsUpdateIdle = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {

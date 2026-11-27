@@ -244,9 +244,11 @@ export class ThemeManager {
 
             this._customizedBorder = this._customizedBackground;
 
-            color.alpha = newAlpha * 255;
-            this._transparency.setColor(color);
-        } else {
+            if (settings.transparencyMode === TransparencyMode.DYNAMIC) {
+                color.alpha = newAlpha * 255;
+                this._transparency.setColor(color);
+            }
+        } else if (settings.transparencyMode === TransparencyMode.DYNAMIC) {
             // backgroundColor is a {Clutter,Cogl}.Color object
             this._transparency.setColor(backgroundColor);
         }
@@ -669,6 +671,7 @@ class Transparency {
         this._transparentTransition = themeNode.get_transition_duration();
 
         Main.uiGroup.remove_child(dummyObject);
+        dummyObject.destroy();
 
         const {settings} = Docking.DockManager;
 

@@ -2,7 +2,6 @@
 
 import {
     Clutter,
-    Gio,
     GLib,
     GObject,
     Shell,
@@ -97,6 +96,8 @@ class DockDashItemContainer extends Dash.DashItemContainer {
             this.translation_x = value;
         else
             this.translation_y = value;
+        if (this.label?.visible)
+            this.syncLabelPosition();
     }
 
     vfunc_get_preferred_width(forHeight) {
@@ -336,10 +337,6 @@ export const DockDash = GObject.registerClass({
         this.add_child(this._dashContainer);
 
         this._workId = Main.initializeDeferredWork(this._box, this._redisplay.bind(this));
-
-        this._shellSettings = new Gio.Settings({
-            schema_id: 'org.gnome.shell',
-        });
 
         this._appSystem = Shell.AppSystem.get_default();
 
@@ -663,8 +660,10 @@ export const DockDash = GObject.registerClass({
         this._magnifyStageY = NaN;
         for (const child of this._box.get_children()) {
             child.setMagnifyTranslation?.(0);
-            if (wasActive)
+            if (wasActive) {
                 child.setMagnifyScale?.(1);
+                child.child?.updateIconGeometry?.();
+            }
         }
     }
 
@@ -1066,6 +1065,10 @@ export const DockDash = GObject.registerClass({
         }
 
         if (actor?.hover) {
+            const adj = this._isHorizontal
+                ? this._scrollView.hadjustment : this._scrollView.vadjustment;
+            if (adj && adj.upper <= adj.page_size)
+                return;
             this._ensureVisibilityActor = actor;
             this._ensureVisibilityDestroyId =
                 actor.connect('destroy', () => this._ensureItemVisibility(null));
@@ -1136,9 +1139,14 @@ export const DockDash = GObject.registerClass({
         appIcon.icon.setIconSize(this.iconSize);
         this._hookUpLabel(item, appIcon);
 
-        item.connectObject('notify::allocation', () => appIcon.updateIconGeometry(),
-            'notify::translation-x', () => appIcon.updateIconGeometry(),
-            'notify::translation-y', () => appIcon.updateIconGeometry(), appIcon);
+        const updateGeometryIfSettled = () => {
+            if (this._magnifyInfluence > 0 || this._magnifyTimeline?.is_playing())
+                return;
+            appIcon.updateIconGeometry();
+        };
+        item.connectObject('notify::allocation', updateGeometryIfSettled,
+            'notify::translation-x', updateGeometryIfSettled,
+            'notify::translation-y', updateGeometryIfSettled, appIcon);
 
         return item;
     }

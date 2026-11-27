@@ -58,7 +58,10 @@ export class AppIconIndicator {
         else
             ({runningIndicatorStyle} = settings);
 
-        if (settings.showIconsEmblems &&
+        if (source.app?.isTrash) {
+            if (settings.showIconsEmblems)
+                this._indicators.push(new TrashBadgeIndicator(source));
+        } else if (settings.showIconsEmblems &&
             !Docking.DockManager.getDefault().notificationsMonitor.dndMode) {
             const unityIndicator = new UnityIndicator(source);
             this._indicators.push(unityIndicator);
@@ -156,11 +159,18 @@ class RunningIndicatorBase extends IndicatorBase {
         super(source);
 
         this._side = Utils.getPosition();
-        this._dominantColorExtractor = new DominantColorExtractor(this._source.app);
+        this.__dominantColorExtractor = null;
+        this._backlightActive = false;
         this._signalsHandler.add(this._source, 'notify::running', () => this.update());
         this._signalsHandler.add(this._source, 'notify::focused', () => this.update());
         this._signalsHandler.add(this._source, 'notify::windows-count', () => this._updateCounterClass());
         this.update();
+    }
+
+    get _dominantColorExtractor() {
+        if (!this.__dominantColorExtractor)
+            this.__dominantColorExtractor = new DominantColorExtractor(this._source.app);
+        return this.__dominantColorExtractor;
     }
 
     get _number() {
@@ -270,6 +280,9 @@ class IndicatorDrawingArea extends St.DrawingArea {
 
         super.vfunc_allocate(box);
 
+        if (!this.visible)
+            return;
+
         const bin = this._source.icon?._iconBin;
         if (!bin?.has_allocation())
             return;
@@ -327,6 +340,7 @@ class RunningIndicatorDots extends RunningIndicatorBase {
         // Seeded from the live state so an icon built for an already-running
         // app shows its dot immediately instead of fading one in at startup.
         this._indicatorVisible = !!this._source.running;
+        this._area.visible = this._indicatorVisible;
 
         const keys = ['custom-theme-running-dots-color',
             'custom-theme-running-dots-border-color',
@@ -373,7 +387,8 @@ class RunningIndicatorDots extends RunningIndicatorBase {
         // REPAINT that reset either would snap every reveal to full opacity
         // ~60ms in and turn the fade into a pop.
         if (transition === Motion.IndicatorTransition.REPAINT) {
-            this._area.queue_repaint();
+            if (running)
+                this._area.queue_repaint();
             return;
         }
 
@@ -384,6 +399,7 @@ class RunningIndicatorDots extends RunningIndicatorBase {
             // before there is anything to reveal. Safe against the repaints
             // that land mid-fade from the source icon's own notify::running
             // style change, because those redraw the dot rather than erase it.
+            this._area.visible = true;
             this._area.opacity = 0;
             this._area.queue_repaint();
             this._area.ease({
@@ -395,25 +411,17 @@ class RunningIndicatorDots extends RunningIndicatorBase {
             return;
         }
 
-        // HIDE. Instant, and that is a measured limit rather than an oversight:
-        // a fade-out has to keep showing a dot the live state has already
-        // dropped, and it cannot. St.DrawingArea clears its surface whenever it
-        // is invalidated, whether or not the repaint handler draws -- pinned
-        // opaque with the draw suppressed, the dot still vanished -- and the
-        // source icon's own notify::running handler invalidates the area ~3ms
-        // in. Anything that did work here would mean lying to all eight
-        // _drawIndicator() overrides about the running state.
-        //
-        // Resetting opacity matters: an interrupted reveal can leave it
-        // part-way, and the next reveal would then fade up from there.
+        // HIDE. Hide the drawing area so stopped pinned icons allocate zero
+        // Cairo surfaces and skip stage-transform allocation math.
         this._area.opacity = 255;
-        this._area.queue_repaint();
+        this._area.visible = false;
     }
 
     _syncBacklight() {
         // Enable / Disable the backlight of running apps
         if (!Docking.DockManager.settings.applyCustomTheme &&
             Docking.DockManager.settings.unityBacklitItems) {
+            this._backlightActive = true;
             const [icon] = this._source._iconContainer.get_children();
             icon.set_style(
                 Docking.DockManager.settings.applyGlossyEffect
@@ -422,9 +430,12 @@ class RunningIndicatorDots extends RunningIndicatorBase {
                 this._enableBacklight();
             else
                 this._disableBacklight();
-        } else {
+        } else if (this._backlightActive) {
+            this._backlightActive = false;
             this._disableBacklight();
-            this._source._iconContainer.get_children()[1].set_style(null);
+            const children = this._source._iconContainer.get_children();
+            if (children.length > 1)
+                children[1].set_style(null);
         }
     }
 
@@ -802,6 +813,90 @@ class RunningIndicatorDot extends RunningIndicatorDots {
         cr.strokePreserve();
         Utils.cairoSetSourceColor(cr, this._bodyColor);
         cr.fill();
+    }
+}
+
+/*
+ * Live item-count badge for the dock Trash icon, reusing the existing
+ * notification-badge pill without allocating a LauncherEntry.
+ */
+class TrashBadgeIndicator extends IndicatorBase {
+    constructor(source) {
+        super(source);
+        this._appInfo = source.app.appInfo;
+        this._badgeBin = null;
+        this._signalsHandler.add([
+            this._appInfo,
+            'notify::item-count',
+            () => this._syncBadge(),
+        ], [
+            St.ThemeContext.get_for_stage(global.stage),
+            'changed',
+            () => this._updateStyle(),
+        ], [
+            Main.overview.dash,
+            'icon-size-changed',
+            () => this._updateStyle(),
+        ]);
+        this._syncBadge();
+    }
+
+    destroy() {
+        this._badgeBin?.destroy();
+        this._badgeBin = null;
+        this._appInfo = null;
+        super.destroy();
+    }
+
+    _syncBadge() {
+        const count = this._appInfo?.item_count ?? 0;
+        if (count <= 0) {
+            this._badgeBin?.destroy();
+            this._badgeBin = null;
+            return;
+        }
+        const text = count > 99 ? '99+' : count.toString();
+        if (this._badgeBin) {
+            this._badgeBin.child.text = text;
+            return;
+        }
+        this._badgeBin = new St.Bin({
+            child: new St.Label({
+                styleClass: 'notification-badge',
+                text,
+            }),
+            xAlign: Clutter.ActorAlign.END,
+            yAlign: Clutter.ActorAlign.START,
+            xExpand: true,
+            yExpand: true,
+        });
+        this._badgeBin.child.clutterText.ellipsize = Pango.EllipsizeMode.MIDDLE;
+        this._source._iconContainer.add_child(this._badgeBin);
+        this._updateStyle();
+    }
+
+    _updateStyle() {
+        if (!this._badgeBin)
+            return;
+        const themeContext = St.ThemeContext.get_for_stage(global.stage);
+        const fontDesc = themeContext.get_font();
+        let fontSize = fontDesc.get_size() / 1024 * 0.9;
+        const {iconSize} = Main.overview.dash;
+        const defaultIconSize = Docking.DockManager.settings.get_default_value(
+            'dash-max-icon-size').unpack();
+        if (!fontDesc.get_size_is_absolute())
+            fontSize /= 0.75;
+        let sizeMultiplier;
+        if (iconSize < defaultIconSize) {
+            sizeMultiplier = Math.max(24, Math.min(iconSize +
+                iconSize * 0.3, defaultIconSize)) / defaultIconSize;
+        } else {
+            sizeMultiplier = iconSize / defaultIconSize;
+        }
+        this._badgeBin.child.set_style(
+            `font-size: ${Math.round(sizeMultiplier * fontSize)}px;` +
+            `margin-left: ${Math.round(sizeMultiplier * 3)}px`
+        );
     }
 }
 
@@ -1235,15 +1330,17 @@ class DominantColorExtractor {
      * Try to get the pixel buffer for the current icon, if not fail gracefully
      */
     _getIconPixBuf() {
-        let iconTexture = this._app.create_icon_texture(16);
+        const iconActor = this._app.create_icon_texture(16);
         const themeLoader = Docking.DockManager.iconTheme;
 
         // Unable to load the icon texture, use fallback
-        if (iconTexture instanceof St.Icon === false)
+        if (iconActor instanceof St.Icon === false) {
+            iconActor?.destroy?.();
             return null;
+        }
 
-
-        iconTexture = iconTexture.get_gicon();
+        const iconTexture = iconActor.get_gicon();
+        iconActor.destroy();
 
         // Unable to load the icon texture, use fallback
         if (!iconTexture)

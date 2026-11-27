@@ -29,6 +29,7 @@ import {
 } from './dependencies/shell/misc.js';
 
 import {
+    AppIcons,
     AppIconsDecorator,
     AppLauncher,
     AppSpread,
@@ -1072,6 +1073,9 @@ const XDock = GObject.registerClass({
     }
 
     _completeDockTransition(plan) {
+        if (this._intellihideIsEnabled)
+            this._restoreUnredirect();
+
         if (plan.targetProgress === Motion.DockMotionTarget.SHOWN) {
             this.dash.setMagnifyVisible(true);
             // Remove barrier so that the mouse pointer is released and can
@@ -1084,8 +1088,6 @@ const XDock = GObject.registerClass({
             return;
         }
 
-        if (this._intellihideIsEnabled)
-            this._restoreUnredirect();
         // Remove queued barrier removal timeout if any.
         if (this._removeBarrierTimeoutId > 0)
             GLib.source_remove(this._removeBarrierTimeoutId);
@@ -1237,8 +1239,13 @@ const XDock = GObject.registerClass({
 
         // In case the mouse move away from the dock area before hovering it,
         // in such case the leave event would never be triggered and the dock
-        // would stay visible forever.
+        // would stay visible forever. Stop polling once the dock itself is
+        // hovered, since Clutter leave events take over from there.
         this._triggerTimeoutId =  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            if (this._box.hover) {
+                this._triggerTimeoutId = 0;
+                return GLib.SOURCE_REMOVE;
+            }
             const [x, y, mods_] = global.get_pointer();
             let shouldHide = true;
             switch (this._position) {
@@ -1460,6 +1467,9 @@ const XDock = GObject.registerClass({
     }
 
     _updateStaticBox() {
+        if (this.dash?._magnifyInfluence > 0 || this.dash?._magnifyTimeline?.is_playing())
+            return;
+
         this._staticBox.init_rect(
             this.x + this._slider.x - (this._position === St.Side.RIGHT ? this._box.width : 0),
             this.y + this._slider.y - (this._position === St.Side.BOTTOM ? this._box.height : 0),
@@ -2039,6 +2049,7 @@ export class DockManager {
         this._appLauncher = new AppLauncher.AppGridLauncher(this._settings);
         this._notificationsMonitor = new NotificationsMonitor.NotificationsMonitor();
 
+        let overviewOpened = Main.overview.visible;
         const needsRemoteModel = () =>
             !this._notificationsMonitor.dndMode && this._settings.showIconsEmblems;
 
@@ -2046,15 +2057,26 @@ export class DockManager {
             const shouldHaveRemoteModel = needsRemoteModel();
             if (shouldHaveRemoteModel && !this._remoteModel) {
                 this._remoteModel = new LauncherAPI.LauncherEntryRemoteModel();
-                this._appIconsDecorator = new AppIconsDecorator.AppIconsDecorator();
             } else if (!shouldHaveRemoteModel) {
                 this._remoteModel?.destroy();
                 delete this._remoteModel;
+            }
+
+            if (shouldHaveRemoteModel && overviewOpened && !this._appIconsDecorator) {
+                this._appIconsDecorator = new AppIconsDecorator.AppIconsDecorator();
+            } else if (!shouldHaveRemoteModel || !overviewOpened) {
                 this._appIconsDecorator?.destroy();
                 delete this._appIconsDecorator;
             }
         };
         ensureRemoteModel();
+
+        this._signalsHandler.add(Main.overview, 'showing', () => {
+            if (!overviewOpened) {
+                overviewOpened = true;
+                ensureRemoteModel();
+            }
+        });
 
         this._signalsHandler.add(this._notificationsMonitor, 'state-changed',
             () => ensureRemoteModel());
@@ -2375,14 +2397,6 @@ export class DockManager {
             this._toggle.bind(this),
         ], [
             this._settings,
-            'changed::extend-height',
-            () => this._adjustPanelCorners(),
-        ], [
-            this._settings,
-            'changed::dock-fixed',
-            () => this._adjustPanelCorners(),
-        ], [
-            this._settings,
             'changed::show-trash',
             () => this._ensureLocations(),
         ], [
@@ -2474,9 +2488,6 @@ export class DockManager {
 
         // Make the necessary changes to Main.overview.dash
         this._prepareMainDash();
-
-        // Adjust corners if necessary
-        this._adjustPanelCorners();
 
         if (this.settings.multiMonitor) {
             const nMon = Main.layoutManager.monitors.length;
@@ -3075,7 +3086,7 @@ export class DockManager {
                 ['destroy signal', () => this.emit('destroy')],
                 ['stock Dash restoration', () => this._restoreDash(true)],
                 ['dock deletion', () => this._deleteDocks(true)],
-                ['panel corners', () => this._revertPanelCorners()],
+                ['recently clicked app state', () => AppIcons.resetRecentlyClickedApp()],
                 ['selector margin', () => {
                     if (this._oldSelectorMargin !== undefined)
                         this.searchController.margin_bottom = this._oldSelectorMargin;
@@ -3155,38 +3166,6 @@ export class DockManager {
             if (DockManager._singleton === this)
                 DockManager._singleton = null;
         }
-    }
-
-    /**
-     * Adjust Panel corners, remove this when 41 won't be supported anymore
-     */
-    _adjustPanelCorners() {
-        if (!this._hasPanelCorners())
-            return;
-
-        const position = Utils.getPosition();
-        const isHorizontal = (position === St.Side.TOP) || (position === St.Side.BOTTOM);
-        const dockOnPrimary  = this._settings.multiMonitor ||
-                             this._preferredMonitorIndex === Main.layoutManager.primaryIndex;
-
-        if (!isHorizontal && dockOnPrimary && this.settings.dockExtended && this.settings.dockFixed) {
-            Main.panel._rightCorner.hide();
-            Main.panel._leftCorner.hide();
-        } else {
-            this._revertPanelCorners();
-        }
-    }
-
-    _revertPanelCorners() {
-        if (!this._hasPanelCorners())
-            return;
-
-        Main.panel._leftCorner.show();
-        Main.panel._rightCorner.show();
-    }
-
-    _hasPanelCorners() {
-        return !!Main.panel?._rightCorner && !!Main.panel?._leftCorner;
     }
 }
 Signals.addSignalMethods(DockManager.prototype);
