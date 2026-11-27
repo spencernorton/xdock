@@ -47,17 +47,31 @@ export async function checkExtensionReload(xdock, wait) {
         shell.disableExtension(first.uuid);
         await until(() => !!resume, 'The first extension reload did not reach the gate');
         shell.disableExtension(second.uuid);
-        await until(() => second.state === 2, 'The second extension reload did not finish');
-        const manager = module.dockManager;
-        const [actor] = dockActors();
-        if (!manager || !actor)
-            throw new Error('The second reload did not restore the dock');
+        let overlappingManager;
+        let overlappingActor;
+        if (shell._enableExtensionMutex) {
+            // Shell 51 serializes settings changes behind this mutex. The
+            // queued disable cannot finish until the first reload resumes.
+            if (second.state !== 1 || module.dockManager)
+                throw new Error('XDock was restored while the first reload was paused');
+        } else {
+            await until(() => second.state === 2, 'The overlapping extension reload did not finish');
+            overlappingManager = module.dockManager;
+            [overlappingActor] = dockActors();
+            if (!overlappingManager || !overlappingActor)
+                throw new Error('The overlapping reload did not restore the dock');
+        }
         resume();
-        await until(() => first.state === 2, 'The first extension reload did not finish');
+        await until(() => first.state === 2 && second.state === 2, 'The extension reloads did not settle');
+        const manager = module.dockManager;
         const actors = dockActors();
-        if (xdock.state !== 1 || module.dockManager !== manager ||
-            actors.length !== 1 || actors[0] !== actor)
-            throw new Error('Overlapping extension reloads lost or duplicated the live dock');
+        const [actor] = actors;
+        if (xdock.state !== 1 || !manager || actors.length !== 1 ||
+            (overlappingManager && (overlappingManager !== manager || overlappingActor !== actor)))
+            throw new Error('The extension reloads lost or duplicated the live dock');
+        xdock.stateObj.enable();
+        if (module.dockManager !== manager || dockActors()[0] !== actor || dockActors().length !== 1)
+            throw new Error('A repeated enable replaced the active dock');
         // A teardown addressed to a different state object cannot destroy
         // this owner's manager, even though both use the same module export.
         xdock.stateObj.disable.call(Object.create(xdock.stateObj));
