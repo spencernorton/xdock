@@ -538,7 +538,7 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
 }
 
 .xdock-app-grid-launcher-scroll {
-    // Slim, subtle overlay scrollbar (the overlay flag is set in JS).
+    // Slim scrollbar with an inset thumb.
     StScrollBar {
         min-width: 8px;
         min-height: 8px;

@@ -1677,8 +1677,8 @@ export class AppGridLauncher {
                 style_class: 'xdock-app-grid-launcher-scroll',
                 hscrollbar_policy: St.PolicyType.NEVER,
                 vscrollbar_policy: St.PolicyType.AUTOMATIC,
-                // An overlay scrollbar preserves the homogeneous column widths.
-                overlay_scrollbars: true,
+                // Give the scrollbar its own space so tile highlights end at the viewport edge.
+                overlay_scrollbars: false,
                 enable_mouse_scrolling: true,
                 x_expand: true,
                 y_expand: true,
