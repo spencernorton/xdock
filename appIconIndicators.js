@@ -4,12 +4,11 @@ import {
     GdkPixbuf,
     Gio,
     GObject,
-    Pango,
     St,
 } from './dependencies/gi.js';
 
-import {Main} from './dependencies/shell/ui.js';
 import {animationsEnabled} from './animationSettings.js';
+import {NotificationBadge} from './notificationBadge.js';
 
 import {
     Docking,
@@ -817,86 +816,36 @@ class RunningIndicatorDot extends RunningIndicatorDots {
 }
 
 /*
- * Live item-count badge for the dock Trash icon, reusing the existing
- * notification-badge pill without allocating a LauncherEntry.
+ * Live item-count badge for the dock Trash icon, reusing NotificationBadge's
+ * frosted-tint pill and flip animation without allocating a LauncherEntry.
  */
 class TrashBadgeIndicator extends IndicatorBase {
     constructor(source) {
         super(source);
-        this._appInfo = source.app.appInfo;
-        this._badgeBin = null;
-        this._signalsHandler.add([
-            this._appInfo,
-            'notify::item-count',
-            () => this._syncBadge(),
-        ], [
-            St.ThemeContext.get_for_stage(global.stage),
-            'changed',
-            () => this._updateStyle(),
-        ], [
-            Main.overview.dash,
-            'icon-size-changed',
-            () => this._updateStyle(),
-        ]);
-        this._syncBadge();
+        const {appInfo} = source.app;
+        const {settings} = Docking.DockManager;
+        const readStyle = () => St.Settings.get().high_contrast
+            ? 'high-contrast'
+            : settings.get_string('notification-badge-style');
+        const adapter = {
+            subscribe: (_id, callback) => {
+                const signals = new Utils.GlobalSignalsHandler();
+                const push = animate => callback(appInfo.item_count ?? 0, animate, readStyle());
+                signals.add(
+                    [appInfo, 'notify::item-count', () => push(true)],
+                    [St.Settings.get(), 'notify::high-contrast', () => push(false)],
+                    [settings, 'changed::notification-badge-style', () => push(false)]);
+                push(false);
+                return () => signals.destroy();
+            },
+        };
+        this._badge = new NotificationBadge(source, adapter);
     }
 
     destroy() {
-        this._badgeBin?.destroy();
-        this._badgeBin = null;
-        this._appInfo = null;
+        this._badge?.destroy();
+        this._badge = null;
         super.destroy();
-    }
-
-    _syncBadge() {
-        const count = this._appInfo?.item_count ?? 0;
-        if (count <= 0) {
-            this._badgeBin?.destroy();
-            this._badgeBin = null;
-            return;
-        }
-        const text = count > 99 ? '99+' : count.toString();
-        if (this._badgeBin) {
-            this._badgeBin.child.text = text;
-            return;
-        }
-        this._badgeBin = new St.Bin({
-            child: new St.Label({
-                styleClass: 'notification-badge',
-                text,
-            }),
-            xAlign: Clutter.ActorAlign.END,
-            yAlign: Clutter.ActorAlign.START,
-            xExpand: true,
-            yExpand: true,
-        });
-        this._badgeBin.child.clutterText.ellipsize = Pango.EllipsizeMode.MIDDLE;
-        this._source._iconContainer.add_child(this._badgeBin);
-        this._updateStyle();
-    }
-
-    _updateStyle() {
-        if (!this._badgeBin)
-            return;
-        const themeContext = St.ThemeContext.get_for_stage(global.stage);
-        const fontDesc = themeContext.get_font();
-        let fontSize = fontDesc.get_size() / 1024 * 0.9;
-        const {iconSize} = Main.overview.dash;
-        const defaultIconSize = Docking.DockManager.settings.get_default_value(
-            'dash-max-icon-size').unpack();
-        if (!fontDesc.get_size_is_absolute())
-            fontSize /= 0.75;
-        let sizeMultiplier;
-        if (iconSize < defaultIconSize) {
-            sizeMultiplier = Math.max(24, Math.min(iconSize +
-                iconSize * 0.3, defaultIconSize)) / defaultIconSize;
-        } else {
-            sizeMultiplier = iconSize / defaultIconSize;
-        }
-        this._badgeBin.child.set_style(
-            `font-size: ${Math.round(sizeMultiplier * fontSize)}px;` +
-            `margin-left: ${Math.round(sizeMultiplier * 3)}px`
-        );
     }
 }
 
@@ -932,20 +881,15 @@ export class UnityIndicator extends IndicatorBase {
         },
     };
 
-    static notificationBadgeSignals = Symbol('notification-badge-signals');
-
     constructor(source) {
         super(source);
 
-        const {remoteModel, notificationsMonitor} = Docking.DockManager.getDefault();
+        const {remoteModel, badgeCounts} = Docking.DockManager.getDefault();
         const remoteEntry = remoteModel.lookupById(this._source.app.id);
         this._remoteEntry = remoteEntry;
+        this._badge = new NotificationBadge(source, badgeCounts);
 
         this._signalsHandler.add([
-            remoteEntry,
-            ['count-changed', 'count-visible-changed'],
-            () => this._updateNotificationsCount(),
-        ], [
             remoteEntry,
             ['progress-changed', 'progress-visible-changed'],
             (sender, {progress, progress_visible: progressVisible}) =>
@@ -959,16 +903,11 @@ export class UnityIndicator extends IndicatorBase {
             'updating-changed',
             (sender, {updating}) => this.setUpdating(updating),
         ], [
-            notificationsMonitor,
-            'changed',
-            () => this._updateNotificationsCount(),
-        ], [
             this._source,
             'style-changed',
             () => this._updateIconStyle(),
         ]);
 
-        this._updateNotificationsCount();
         this.setProgress(this._remoteEntry.progress_visible
             ? this._remoteEntry.progress : -1);
         this.setUrgent(this._remoteEntry.urgent);
@@ -976,132 +915,13 @@ export class UnityIndicator extends IndicatorBase {
     }
 
     destroy() {
-        this._notificationBadgeBin?.destroy();
-        this._notificationBadgeBin = null;
+        this._badge.destroy();
         this._hideProgressOverlay();
         this.setUrgent(false);
         this.setUpdating(false);
         this._remoteEntry = null;
 
         super.destroy();
-    }
-
-    _updateNotificationBadgeStyle() {
-        const themeContext = St.ThemeContext.get_for_stage(global.stage);
-        const fontDesc = themeContext.get_font();
-        const defaultFontSize = fontDesc.get_size() / 1024;
-        let fontSize = defaultFontSize * 0.9;
-        const {iconSize} = Main.overview.dash;
-        const defaultIconSize = Docking.DockManager.settings.get_default_value(
-            'dash-max-icon-size').unpack();
-
-        if (!fontDesc.get_size_is_absolute()) {
-            // fontSize was expressed in points, so convert to pixel
-            fontSize /= 0.75;
-        }
-
-        let sizeMultiplier;
-        if (iconSize < defaultIconSize) {
-            sizeMultiplier = Math.max(24, Math.min(iconSize +
-                iconSize * 0.3, defaultIconSize)) / defaultIconSize;
-        } else {
-            sizeMultiplier = iconSize / defaultIconSize;
-        }
-
-        fontSize = Math.round(sizeMultiplier * fontSize);
-        const leftMargin = Math.round(sizeMultiplier * 3);
-
-        this._notificationBadgeBin.child.set_style(
-            `font-size: ${fontSize}px;` +
-            `margin-left: ${leftMargin}px`
-        );
-    }
-
-    _notificationBadgeCountToText(count) {
-        if (count <= 9999) {
-            return count.toString();
-        } else if (count < 1e5) {
-            const thousands = count / 1e3;
-            return `${thousands.toFixed(1).toString()}k`;
-        } else if (count < 1e6) {
-            const thousands = count / 1e3;
-            return `${thousands.toFixed(0).toString()}k`;
-        } else if (count < 1e8) {
-            const millions = count / 1e6;
-            return `${millions.toFixed(1).toString()}M`;
-        } else if (count < 1e9) {
-            const millions = count / 1e6;
-            return `${millions.toFixed(0).toString()}M`;
-        } else {
-            const billions = count / 1e9;
-            return `${billions.toFixed(1).toString()}B`;
-        }
-    }
-
-    _updateNotificationsCount() {
-        const remoteCount = this._remoteEntry['count-visible']
-            ? this._remoteEntry.count ?? 0 : 0;
-
-        if (remoteCount > 0 &&
-            Docking.DockManager.settings.applicationCounterOverridesNotifications) {
-            this.setNotificationCount(remoteCount);
-            return;
-        }
-
-        const {notificationsMonitor} = Docking.DockManager.getDefault();
-        const notificationsCount = notificationsMonitor.getAppNotificationsCount(
-            this._source.app.id);
-
-        this.setNotificationCount(remoteCount + notificationsCount);
-    }
-
-    _updateNotificationsBadge(text) {
-        if (this._notificationBadgeBin) {
-            this._notificationBadgeBin.child.text = text;
-            return;
-        }
-
-        this._notificationBadgeBin = new St.Bin({
-            child: new St.Label({
-                styleClass: 'notification-badge',
-                text,
-            }),
-            xAlign: Clutter.ActorAlign.END,
-            yAlign: Clutter.ActorAlign.START,
-            xExpand: true,
-            yExpand: true,
-        });
-        this._notificationBadgeBin.child.clutterText.ellipsize =
-            Pango.EllipsizeMode.MIDDLE;
-
-        this._source._iconContainer.add_child(this._notificationBadgeBin);
-        this._updateNotificationBadgeStyle();
-
-        const themeContext = St.ThemeContext.get_for_stage(global.stage);
-        this._signalsHandler.addWithLabel(UnityIndicator.notificationBadgeSignals, [
-            themeContext,
-            'changed',
-            () => this._updateNotificationBadgeStyle(),
-        ], [
-            themeContext,
-            'notify::scale-factor',
-            () => this._updateNotificationBadgeStyle(),
-        ], [
-            this._source._iconContainer,
-            'notify::size',
-            () => this._updateNotificationBadgeStyle(),
-        ]);
-    }
-
-    setNotificationCount(count) {
-        if (count > 0) {
-            const text = this._notificationBadgeCountToText(count);
-            this._updateNotificationsBadge(text);
-        } else if (this._notificationBadgeBin) {
-            this._signalsHandler.removeWithLabel(UnityIndicator.notificationBadgeSignals);
-            this._notificationBadgeBin.destroy();
-            this._notificationBadgeBin = null;
-        }
     }
 
     _showProgressOverlay() {

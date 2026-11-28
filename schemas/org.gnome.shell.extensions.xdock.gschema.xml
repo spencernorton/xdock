@@ -23,6 +23,10 @@
     <value value='0' nick='overview'/>
     <value value='1' nick='launcher'/>
   </enum>
+  <enum id='org.gnome.shell.extensions.xdock.notificationBadgeStyle'>
+    <value value='0' nick='frosted-tint'/>
+    <value value='1' nick='accent-fill'/>
+  </enum>
   <!-- this is mean to Match StSide. LEFT and RIGHT actual position in reversed in
        rtl languages -->
   <enum id='org.gnome.shell.extensions.xdock.position'>
@@ -701,6 +705,11 @@
       <default>true</default>
       <summary>Show the number of unread notifications in icons</summary>
       <description>Show application icons emblems such as notification</description>
+    </key>
+    <key name="notification-badge-style" enum="org.gnome.shell.extensions.xdock.notificationBadgeStyle">
+      <default>'frosted-tint'</default>
+      <summary>Notification badge style</summary>
+      <description>Choose the appearance of notification counters on the dock and application launcher.</description>
     </key>
     <key name="application-counter-overrides-notifications" type="b">
       <default>true</default>

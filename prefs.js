@@ -914,6 +914,15 @@ export default class DockPreferences extends ExtensionPreferences {
             icon_name: 'applications-graphics-symbolic',
         });
 
+        const badgeGroup = new Adw.PreferencesGroup({title: __('Notification badges')});
+        page.add(badgeGroup);
+        this._comboRow(badgeGroup, {
+            title: __('Badge style'),
+            subtitle: __('Applies to the dock and application launcher.'),
+            key: 'notification-badge-style',
+            labels: [__('Frosted Tint'), __('Accent Fill')],
+        });
+
         const dashGroup = new Adw.PreferencesGroup({title: __('Dash')});
         page.add(dashGroup);
 

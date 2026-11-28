@@ -51,6 +51,7 @@ import {WholeSurfaceRedraw} from './dockBlur.js';
 import {animationsEnabled} from './animationSettings.js';
 import {IconDropAnimation} from './iconDropAnimation.js';
 import {refinePopupMotion} from './popupMenuMotion.js';
+import {NotificationBadge} from './notificationBadge.js';
 
 import * as PopupMenuUtils from './popupMenuUtils.js';
 
@@ -314,7 +315,8 @@ export class AppGridLauncher {
      * @param {Gio.Settings} [settings] XDock's settings, which remember the
      *   size the popup was dragged to
      */
-    constructor(settings = null) {
+    constructor(settings = null, badgeCounts = null) {
+        this._badgeCounts = badgeCounts;
         this._destroyed = false;
         this._settings = settings;
         this._menu = null;
@@ -3161,6 +3163,8 @@ export class AppGridLauncher {
 
     _createAppButton(entry) {
         const button = new LauncherAppIcon(entry.app, this);
+        if (this._badgeCounts)
+            new NotificationBadge(button, this._badgeCounts, () => this._isBadgeOnScreen(button));
         button.setIconSize(this._iconSize);
         button.accessible_name = entry.name;
         button.x_expand = true;
@@ -3197,5 +3201,16 @@ export class AppGridLauncher {
         });
 
         return button;
+    }
+
+    _isBadgeOnScreen(button) {
+        const view = this._scrollView;
+        if (!this.isOpen || !view?.has_allocation() || !button.has_allocation())
+            return false;
+
+        const tile = button.get_transformed_extents();
+        const viewport = view.get_transformed_extents();
+        return tile.origin.y < viewport.origin.y + viewport.size.height &&
+            tile.origin.y + tile.size.height > viewport.origin.y;
     }
 }

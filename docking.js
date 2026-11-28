@@ -47,6 +47,7 @@ import {
 
 import {Extension} from './dependencies/shell/extensions/extension.js';
 import {animationsEnabled} from './animationSettings.js';
+import {AppBadgeCounts} from './appBadgeCounts.js';
 import {DockBlur} from './dockBlur.js';
 import {
     DeferredTask,
@@ -2046,27 +2047,30 @@ export class DockManager {
         this._oldDash = Main.overview.isDummy ? null : Main.overview.dash;
         this._discreteGpuAvailable = AppDisplay.discreteGpuAvailable;
         this._appSpread = new AppSpread.AppSpread();
-        this._appLauncher = new AppLauncher.AppGridLauncher(this._settings);
         this._notificationsMonitor = new NotificationsMonitor.NotificationsMonitor();
+        this._badgeCounts = new AppBadgeCounts(this._settings, this._notificationsMonitor);
+        this._appLauncher = new AppLauncher.AppGridLauncher(this._settings, this._badgeCounts);
 
         let overviewOpened = Main.overview.visible;
-        const needsRemoteModel = () =>
-            !this._notificationsMonitor.dndMode && this._settings.showIconsEmblems;
-
         const ensureRemoteModel = () => {
-            const shouldHaveRemoteModel = needsRemoteModel();
-            if (shouldHaveRemoteModel && !this._remoteModel) {
+            const enabled = this._settings.showIconsEmblems;
+            if (enabled && !this._remoteModel)
                 this._remoteModel = new LauncherAPI.LauncherEntryRemoteModel();
-            } else if (!shouldHaveRemoteModel) {
-                this._remoteModel?.destroy();
-                delete this._remoteModel;
-            }
 
-            if (shouldHaveRemoteModel && overviewOpened && !this._appIconsDecorator) {
+            const decorate = enabled && !this._notificationsMonitor.dndMode && overviewOpened;
+            if (decorate && !this._appIconsDecorator) {
                 this._appIconsDecorator = new AppIconsDecorator.AppIconsDecorator();
-            } else if (!shouldHaveRemoteModel || !overviewOpened) {
+            } else if (!decorate) {
                 this._appIconsDecorator?.destroy();
                 delete this._appIconsDecorator;
+            }
+
+            // Keep accepting the latest app count while Do Not Disturb hides
+            // the badges. Most apps only publish when their count changes.
+            this._badgeCounts.setRemoteModel(enabled ? this._remoteModel : null);
+            if (!enabled) {
+                this._remoteModel?.destroy();
+                delete this._remoteModel;
             }
         };
         ensureRemoteModel();
@@ -2149,7 +2153,11 @@ export class DockManager {
     }
 
     get remoteModel() {
-        return this._remoteModel;
+        return this._notificationsMonitor?.dndMode ? null : this._remoteModel;
+    }
+
+    get badgeCounts() {
+        return this._badgeCounts;
     }
 
     get mainDock() {
@@ -3092,14 +3100,15 @@ export class DockManager {
                         this.searchController.margin_bottom = this._oldSelectorMargin;
                 }],
                 ['file manager client', () => this._fm1Client?.destroy()],
-                ['notifications monitor', () => this._notificationsMonitor?.destroy()],
                 ['application spread', () => this._appSpread?.destroy()],
                 ['application launcher', () => this._appLauncher?.destroy()],
+                ['application icon decorator', () => this._appIconsDecorator?.destroy()],
+                ['application badge counts', () => this._badgeCounts?.destroy()],
+                ['notifications monitor', () => this._notificationsMonitor?.destroy()],
                 ['trash integration', () => this._trash?.destroy()],
                 ['file manager wrapping', () => Locations.unWrapFileManagerApp()],
                 ['removable integration', () => this._removables?.destroy()],
                 ['launcher remote model', () => this._remoteModel?.destroy()],
-                ['application icon decorator', () => this._appIconsDecorator?.destroy()],
                 ['desktop icons integration', () => this._desktopIconsUsableArea?.destroy()],
                 ['global signal handler', () => this._signalsHandler?.destroy()],
                 ['method injection handler', () => this._methodInjections?.destroy()],
@@ -3140,6 +3149,7 @@ export class DockManager {
             this._allDocks = [];
             this._fm1Client = null;
             this._notificationsMonitor = null;
+            this._badgeCounts = null;
             this._appSpread = null;
             this._appLauncher = null;
             this._trash = null;

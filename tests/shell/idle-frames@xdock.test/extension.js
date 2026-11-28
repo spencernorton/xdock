@@ -23,6 +23,7 @@ import {run as iconRefresh} from '../icon-refresh.js';
 import {run as launcherMotion} from '../launcher-motion.js';
 import {run as launcherScrolling} from '../launcher-scrolling.js';
 import {run as launcherResize} from '../launcher-resize.js';
+import {run as notificationBadges} from '../notification-badges.js';
 
 const XDOCK = 'xdock@spencercnorton.github.io';
 
@@ -102,6 +103,11 @@ export default class IdleFramesProbe extends Extension {
         settings.set_enum('transparency-mode', 1);
         settings.set_boolean('custom-background-color', true);
         settings.set_double('background-opacity', 0.4);
+        // The urgency probe flips a flag on the icon. Give it the normal
+        // notification policy for the hop check, then restore the harness
+        // policy before the interaction tests run.
+        const notifications = new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'});
+        notifications.set_boolean('show-banners', true);
         Main.overview.hide();
         // The top bar's clock repaints once a minute.
         Main.panel.statusArea.dateMenu.hide();
@@ -177,6 +183,7 @@ export default class IdleFramesProbe extends Extension {
             }
         }
         global.force_animations = false;
+        notifications.set_boolean('show-banners', false);
 
         notes.forEach(note => note.actor?.remove_effect(note));
         report('popup interactions', JSON.stringify(await popupInteractions()));
@@ -198,6 +205,8 @@ export default class IdleFramesProbe extends Extension {
         if (Main.extensionManager.lookup(XDOCK)?.state !== 1)
             throw new Error('XDock did not survive rapid disable/re-enable');
         report('rapid lifecycle', '3 cycles');
+        // This probe uses magnification and deliberately reloads the dock.
+        report('notification badges', JSON.stringify(await notificationBadges()));
         await checkExtensionReload(xdock, wait);
         report('overlapping extension reloads', 'one dock');
         report('result', failed ? 'fail' : 'pass');

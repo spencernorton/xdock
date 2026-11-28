@@ -34,10 +34,18 @@ cp "$(dirname "$0")/extension-reload.js" "$installed/"
 cp "$(dirname "$0")/popup-interactions.js" "$(dirname "$0")/magnify-interactions.js" \
     "$(dirname "$0")/icon-refresh.js" "$(dirname "$0")/dwell-interactions.js" \
     "$(dirname "$0")/launcher-scrolling.js" "$(dirname "$0")/launcher-motion.js" \
-    "$(dirname "$0")/launcher-resize.js" "$installed/"
+    "$(dirname "$0")/launcher-resize.js" "$(dirname "$0")/notification-badges.js" "$installed/"
 # Real desktop entries let Shell's application system populate the launcher;
 # no application or data from the host session is used.
 mkdir -p "$XDG_DATA_HOME/applications"
+cat > "$XDG_DATA_HOME/applications/dev.norvi.PenguinMail.desktop" <<ENTRY
+[Desktop Entry]
+Type=Application
+Name=Mailbox Badge Fixture
+Exec=/usr/bin/true
+Icon=mail-unread-symbolic
+Categories=Network;
+ENTRY
 for i in $(seq 0 79); do
     number=$(printf '%02d' "$i")
     cat > "$XDG_DATA_HOME/applications/xdock-popup-test-$number.desktop" <<ENTRY

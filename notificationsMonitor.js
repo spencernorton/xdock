@@ -26,21 +26,23 @@ export class NotificationsMonitor {
         const getIsEnabled = () => !this.dndMode &&
             Docking.DockManager.settings.showIconsNotificationsCounter;
 
+        this._dndMode = !this._settings.get_boolean('show-banners');
         this._isEnabled = getIsEnabled();
         const checkIsEnabled = () => {
             const isEnabled = getIsEnabled();
             if (isEnabled !== this._isEnabled) {
                 this._isEnabled = isEnabled;
-                this.emit('state-changed');
-
                 this._updateState();
+                this.emit('state-changed');
+                return true;
             }
+            return false;
         };
 
-        this._dndMode = !this._settings.get_boolean('show-banners');
         this._signalsHandler.add(this._settings, 'changed::show-banners', () => {
             this._dndMode = !this._settings.get_boolean('show-banners');
-            checkIsEnabled();
+            if (!checkIsEnabled())
+                this.emit('state-changed');
         });
         this._signalsHandler.add(Docking.DockManager.settings,
             'changed::show-icons-notifications-counter', checkIsEnabled);
