@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Add opt-in live pill glass finish (`dock-glass-mode = 'live'`) using pure-Cogl hollow 3-layer analytic SDF shadows, subtle bevel rim highlight, dark outer contour, continuous squircle corners with `gnome-rounded-blur`, and autohide GPU target release, while keeping `0` idle frames.
+
 ## 2.5.0 — 2026-11-27
 
 - Eliminate idle polling overhead, stop triggering file-manager auto-start on login, and show a live Trash item count badge matching notification badges.

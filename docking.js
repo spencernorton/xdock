@@ -191,8 +191,12 @@ const DashSlideContainer = GObject.registerClass({
 
         this.child.allocate(childBox);
 
-        this.child.set_clip(-childBox.x1, -childBox.y1,
-            -childBox.x1 + availWidth, -childBox.y1 + availHeight);
+        if (this.slideX >= 1) {
+            this.child.remove_clip();
+        } else {
+            this.child.set_clip(-childBox.x1, -childBox.y1,
+                -childBox.x1 + availWidth, -childBox.y1 + availHeight);
+        }
     }
 
     /**

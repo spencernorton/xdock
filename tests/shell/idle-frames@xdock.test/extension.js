@@ -148,6 +148,21 @@ export default class IdleFramesProbe extends Extension {
                 St.Settings.get().enable_animations || urgent.count === 0);
         }
 
+        // Live pill glass finish (hollow 3-layer GPU shadow + bevel rim) must also
+        // paint strictly 0 frames while idle.
+        settings.set_boolean('dock-blur', true);
+        settings.set_string('dock-glass-mode', 'live');
+        await Main.extensionManager.disableExtension(XDOCK);
+        await Main.extensionManager.enableExtension(XDOCK);
+        await wait(1500);
+        const livePill = (await dash())._background.get_effect('xdock-pill-glass');
+        report('live pill glass, effect', livePill ? 'attached' : 'none');
+        failed ||= !livePill;
+        const stillLive = await frames(3000);
+        expect('live pill glass, still screen, 3 s', stillLive, stillLive.count === 0);
+        settings.set_string('dock-glass-mode', 'static');
+        await wait(500);
+
         // Animations forced on: a hop of half a second, then a rest of two and
         // a half with no frames at all.
         global.force_animations = true;

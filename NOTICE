@@ -50,3 +50,8 @@ file's header, GPL-2.0-or-later. XDock changed only the product name in them.
 Licence
 -------
 GPL-2.0-or-later. The full licence text is in COPYING.
+
+The pure-Cogl hollow multi-layer analytic SDF dock shadow and bevel rim
+finish in dockPillGlass.js are cleanly reimplemented under
+GPL-3.0-or-later with design inspiration from Super G
+(https://github.com/soheil03/super-g, GPL-3.0-or-later).
