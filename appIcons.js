@@ -544,6 +544,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
         }
         if (floating || visibilityChanged)
             this.get_parent()?.syncLabelPosition?.();
+        this._notificationBadge?.syncFloating();
     }
 
     _syncFloatPosition(iconBin) {

@@ -3,4 +3,5 @@ docking.js
 appIcons.js
 appIconsDecorator.js
 appLauncher.js
+notificationBadge.js
 locations.js

@@ -59,6 +59,7 @@ for (const [path, replacement] of [
     ['./dependencies/shell/extensions/extension.js', empty],
     ['./popupMenuUtils.js', dataUrl('export const close = menu => { menu.isOpen = false; };')],
     ['./appLauncherModel.js', new URL('../appLauncherModel.js', import.meta.url).href],
+    ['./notificationBadge.js', dataUrl('export const NotificationBadge = class {};')],
 ])
     source = source.replace(`'${path}'`, `'${replacement}'`);
 const {AppGridLauncher} = await import(dataUrl(source));

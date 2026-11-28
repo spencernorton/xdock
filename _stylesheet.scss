@@ -484,16 +484,29 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
     text-align: center;
 }
 
-#xdockContainer .notification-badge,
-.overview-tile .notification-badge,
-.icon-grid .notification-badge {
-    color: rgba(255, 255, 255, 1);
-    background-color: rgba(255, 0, 0, 1);
-    padding: 0.2em 0.5em;
-    border-radius: 1em;
-    font-weight: bold;
-    text-align: center;
-    margin: 2px;
+.xdock-count-badge {
+    color: -st-accent-fg-color;
+    background-color: -st-accent-color;
+    border: 1px solid transparent;
+    padding: 1px 4px;
+    min-width: 1em;
+    border-radius: 999px;
+    font-size: 0.8em;
+    font-weight: 700;
+}
+
+.xdock-count-badge.frosted-tint {
+    // Keep the accent and some of the underlying icon visible through the tint.
+    $tint: st-mix(#111724, -st-accent-color, 36%);
+    color: white;
+    background-color: st-transparentize(st-mix(white, $tint, 6%), 0.21);
+    background-gradient-end: st-transparentize($tint, 0.21);
+    background-gradient-direction: vertical;
+    box-shadow: 0 1px 2px rgba(21, 23, 36, 0.25);
+}
+
+.xdock-count-badge.high-contrast {
+    border-color: -st-accent-fg-color;
 }
 
 #xdockPreviewSeparator.popup-separator-menu-item-horizontal {

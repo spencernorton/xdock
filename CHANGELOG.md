@@ -4,6 +4,7 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Show matching notification badges on the dock and Apps launcher, with a flip animation for count changes, Frosted Tint and Accent Fill styles in appearance settings, Mailbox unread totals, and matching Trash item counts.
 - Ease dragged apps into their dock slots and shrink them into the launcher drawer that receives them, with instant drops when reduced motion is enabled.
 - Keep app highlights clear of the scrollbar in the application launcher.
 
