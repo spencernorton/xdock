@@ -4,6 +4,8 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Keep app highlights clear of the scrollbar in the application launcher.
+
 ## 2.4.0 — 2026-11-26
 
 - Keep one dock when GNOME Shell reloads several extensions at once, and respect the user's choice to disable the dock during a reload.

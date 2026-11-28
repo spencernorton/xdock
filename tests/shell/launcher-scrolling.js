@@ -68,6 +68,24 @@ export async function run() {
         Main.panel.statusArea.dateMenu.hide();
         await wait(500);
         let adjustment = await open();
+        const view = launcher._scrollView;
+        const scrollbar = view.get_children()
+            .find(actor => actor instanceof St.ScrollBar && actor.height > actor.width);
+        check(scrollbar && view.vscrollbar_visible, 'vertical scrollbar is present');
+        const edgeTile = launcher._visibleButtons[launcher._columns - 1];
+        const [tileX, tileY] = edgeTile.get_transformed_position();
+        const [tileWidth, tileHeight] = edgeTile.get_transformed_size();
+        move(tileX + tileWidth / 2, tileY + tileHeight / 2);
+        await wait(100);
+        check(edgeTile.hover, 'the tile next to the scrollbar must highlight on hover');
+        const [hoverX] = edgeTile.get_transformed_position();
+        const [hoverWidth] = edgeTile.get_transformed_size();
+        const [trackX] = scrollbar.get_transformed_position();
+        const [trackWidth] = scrollbar.get_transformed_size();
+        const gap = launcher._rtl ? hoverX - trackX - trackWidth : trackX - hoverX - hoverWidth;
+        check(gap >= -0.5, `the hovered tile overlaps the scrollbar by ${-gap}px`);
+        result.hoverClearOfScrollbar = 'pass';
+
         const unit = Math.pow(adjustment.page_size, 2 / 3);
         check(adjustment.upper - adjustment.page_size > unit * 2, 'fixture needs two full wheel steps');
         adjustment.value = 0;
@@ -152,6 +170,7 @@ export async function run() {
         launcher._entry.set_text('Popup Test 00');
         await wait(350);
         check(launcher._visibleButtons.length === 1, 'search filters results');
+        check(!view.vscrollbar_visible, 'the scrollbar must hide when the filtered results fit');
         check(!adjustment.get_transition('value') && launcher._scrollTarget === null,
             'filtering must cancel wheel motion');
         result.keyboardAndSearch = 'pass';
@@ -160,9 +179,7 @@ export async function run() {
         adjustment.value = 0;
         wheel(Clutter.ScrollDirection.DOWN);
         await waitForMotion(adjustment);
-        const scrollbar = launcher._scrollView.get_children()
-            .find(actor => actor instanceof St.ScrollBar && actor.height > actor.width);
-        check(scrollbar, 'vertical scrollbar is present');
+        check(view.vscrollbar_visible, 'the scrollbar must reappear when the results overflow');
         const [barX, barY] = scrollbar.get_transformed_position();
         move(barX + scrollbar.width / 2, barY + scrollbar.height / 2);
         pointer.notify_button(GLib.get_monotonic_time(), 1, Clutter.ButtonState.PRESSED);
