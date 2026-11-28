@@ -6,6 +6,7 @@ import {
     Mtk,
     St,
 } from './dependencies/gi.js';
+import {DockPillGlassEffect} from './dockPillGlass.js';
 
 // gnome-rounded-blur's effect clips the blur to the dock's rounded corners.
 // GNOME Shell's own effect cannot, and its square corners would show outside
@@ -20,7 +21,18 @@ const Blur = await import('gi://Blur').then(({default: blur}) => {
     }
 }, () => null);
 
+const BLUR_HAS_SQUIRCLE = Boolean(
+    Blur && GObject.Object?.find_property?.call(Blur.BlurEffect, 'corner-exponent')
+);
+const BLUR_HAS_DITHER = Boolean(
+    Blur && GObject.Object?.find_property?.call(Blur.BlurEffect, 'dither')
+);
+const BLUR_HAS_UNMAP_DELAY = Boolean(
+    Blur && GObject.Object?.find_property?.call(Blur.BlurEffect, 'unmap-release-delay')
+);
+
 export const EFFECT_NAME = 'xdock-blur';
+export const PILL_GLASS_EFFECT_NAME = 'xdock-pill-glass';
 
 /**
  * @param {Mtk.Region} clip the part of the stage being redrawn
@@ -105,20 +117,51 @@ export class DockBlur {
         this._dash = dash;
         this._settings = settings;
         this._effect = null;
+        this._pillEffect = null;
+        this._styleId = 0;
+        this._mappedId = 0;
+        this._savedClip = null;
         this._settingsIds = [];
-        if (!Blur)
-            return;
-        this._settingsIds = ['dock-blur', 'dock-blur-sigma', 'dock-blur-brightness'].map(key =>
+        const keys = ['dock-glass-mode'];
+        if (Blur)
+            keys.push('dock-blur', 'dock-blur-sigma', 'dock-blur-brightness');
+        this._settingsIds = keys.map(key =>
             settings.connect(`changed::${key}`, () => this._update()));
         this._update();
     }
 
+    _isLiveGlassMode() {
+        return typeof this._settings.get_string === 'function' &&
+            this._settings.get_string('dock-glass-mode') === 'live';
+    }
+
     _update() {
-        if (this._settings.get_boolean('dock-blur'))
+        const wantBlur = Boolean(Blur) && this._settings.get_boolean('dock-blur');
+        const wantLivePill = this._isLiveGlassMode();
+
+        if (wantBlur)
             this._attach();
         else
             this._detach();
+
+        if (wantLivePill)
+            this._attachPillGlass();
+        else
+            this._detachPillGlass();
+
+        this._syncStyleWatcher();
         this._sync();
+    }
+
+    _syncStyleWatcher() {
+        const background = this._dash._background;
+        const needWatcher = Boolean(this._effect || this._pillEffect);
+        if (needWatcher && !this._styleId) {
+            this._styleId = background.connect('style-changed', () => this._sync());
+        } else if (!needWatcher && this._styleId) {
+            background.disconnect(this._styleId);
+            this._styleId = 0;
+        }
     }
 
     _attach() {
@@ -133,37 +176,85 @@ export class DockBlur {
         background.add_effect_with_name(EFFECT_NAME, effect);
         this._effect = effect;
         this._dash.add_child(this._redraw);
-        this._styleId = background.connect('style-changed', () => this._sync());
+        this._mappedId = background.connect('notify::mapped', () => {
+            if (!background.mapped && typeof this._effect?.release_targets === 'function')
+                this._effect.release_targets();
+        });
     }
 
     _detach() {
         if (!this._effect)
             return;
         const {_background: background, _dashContainer: icons} = this._dash;
-        background.disconnect(this._styleId);
+        if (this._mappedId) {
+            background.disconnect(this._mappedId);
+            this._mappedId = 0;
+        }
         this._redraw.destroy();
         background.remove_effect(this._effect);
         [this._dash.offscreen_redirect, icons.offscreen_redirect] = this._redirects;
         this._effect = this._redraw = null;
     }
 
+    _attachPillGlass() {
+        if (this._pillEffect)
+            return;
+        const {_background: background} = this._dash;
+        const pillEffect = new DockPillGlassEffect();
+        this._savedClip = background.clip_to_allocation;
+        background.clip_to_allocation = false;
+        background.add_effect_with_name(PILL_GLASS_EFFECT_NAME, pillEffect);
+        this._pillEffect = pillEffect;
+    }
+
+    _detachPillGlass() {
+        if (!this._pillEffect)
+            return;
+        const {_background: background} = this._dash;
+        background.remove_effect(this._pillEffect);
+        if (this._savedClip !== null)
+            background.clip_to_allocation = this._savedClip;
+        this._savedClip = null;
+        this._pillEffect = null;
+    }
+
     _sync() {
         const background = this._dash._background;
         // A theme node exists only on the stage; style-changed follows there.
-        if (!this._effect || !background.get_stage())
+        if ((!this._effect && !this._pillEffect) || !background.get_stage())
             return;
         const node = background.get_theme_node();
         const {scaleFactor} = St.ThemeContext.get_for_stage(global.stage);
-        this._effect.radius = this._settings.get_int('dock-blur-sigma') * scaleFactor;
-        this._effect.brightness = this._settings.get_double('dock-blur-brightness');
-        this._effect.corner_radius = node.get_border_radius(St.Corner.TOPLEFT);
-        // Nothing shows through an opaque background, such as the one high
-        // contrast gives the dock.
-        this._effect.enabled = node.get_background_color().alpha < 255;
+        const cornerRadius = node.get_border_radius(St.Corner.TOPLEFT);
+        const translucent = node.get_background_color().alpha < 255;
+        const liveMode = this._isLiveGlassMode();
+
+        if (this._effect) {
+            this._effect.radius = this._settings.get_int('dock-blur-sigma') * scaleFactor;
+            this._effect.brightness = this._settings.get_double('dock-blur-brightness');
+            this._effect.corner_radius = cornerRadius;
+            if (BLUR_HAS_SQUIRCLE)
+                this._effect.corner_exponent = liveMode ? 3.0 : 2.0;
+            if (BLUR_HAS_DITHER)
+                this._effect.dither = true;
+            if (BLUR_HAS_UNMAP_DELAY)
+                this._effect.unmap_release_delay = 2000;
+            // Nothing shows through an opaque background, such as the one high
+            // contrast gives the dock.
+            this._effect.enabled = translucent;
+        }
+        if (this._pillEffect) {
+            this._pillEffect.cornerRadius = cornerRadius;
+            this._pillEffect.cornerExponent = 3.0;
+            this._pillEffect.enabled = translucent;
+        }
     }
 
     destroy() {
         this._settingsIds.forEach(id => this._settings.disconnect(id));
+        this._settingsIds = [];
+        this._detachPillGlass();
         this._detach();
+        this._syncStyleWatcher();
     }
 }

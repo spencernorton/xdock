@@ -14,6 +14,12 @@ const gi = dataUrl(`
 export const Clutter = {
     OffscreenRedirect: {AUTOMATIC_FOR_OPACITY: 1, ALWAYS: 2},
     ActorBox: {new: (x1, y1, x2, y2) => ({x1, y1, x2, y2})},
+    Effect: class {
+        _init() {}
+        queue_repaint() {}
+        get_actor() { return this._actor ?? null; }
+        vfunc_set_actor(actor) { this._actor = actor; }
+    },
     Clone: class {
         constructor({source}) {
             this.source = source;
@@ -31,11 +37,20 @@ export const Clutter = {
         }
     },
 };
-export const GObject = {registerClass: klass => klass};
+export const GObject = {
+    registerClass: (...args) => args.at(-1),
+    Object: {
+        find_property(name) {
+            return this._props?.includes(name) ? {name} : null;
+        },
+    },
+};
 export const Mtk = {
     Rectangle: class { constructor(fields) { Object.assign(this, fields); } },
     RegionOverlap: {OUT: 0, IN: 1, PART: 2},
 };
+export const Cogl = {};
+export const Graphene = {Point3D: class { constructor(p) { Object.assign(this, p); } }};
 export const St = {
     Corner: {TOPLEFT: 0},
     ThemeContext: {get_for_stage: () => ({scaleFactor: 2})},
@@ -45,7 +60,19 @@ export const St = {
 const roundedBlur = dataUrl(`
 export default {
     BlurMode: {ACTOR: 0, BACKGROUND: 1},
-    BlurEffect: class { constructor(params) { Object.assign(this, {enabled: true, radius: 0, brightness: 1, corner_radius: 0}, params); } },
+    BlurEffect: Object.assign(
+        class {
+            constructor(params) {
+                Object.assign(this, {
+                    enabled: true, radius: 0, brightness: 1, corner_radius: 0,
+                    corner_exponent: 2.0, dither: false, unmap_release_delay: 0,
+                    released: 0,
+                }, params);
+            }
+            release_targets() { this.released++; }
+        },
+        {_props: ['corner-exponent', 'dither', 'unmap-release-delay']}
+    ),
 };
 `);
 
@@ -61,8 +88,12 @@ globalThis.global = {stage: {}};
 const logged = [];
 globalThis.logError = (_error, message) => logged.push(message);
 
-const source = (await readFile(new URL('../dockBlur.js', import.meta.url), 'utf8'))
+const pillSource = (await readFile(new URL('../dockPillGlass.js', import.meta.url), 'utf8'))
     .replace("'./dependencies/gi.js'", `'${gi}'`);
+const pillUrl = dataUrl(pillSource);
+const source = (await readFile(new URL('../dockBlur.js', import.meta.url), 'utf8'))
+    .replace("'./dependencies/gi.js'", `'${gi}'`)
+    .replace("'./dockPillGlass.js'", `'${pillUrl}'`);
 const rounded = await import(dataUrl(source.replace("'gi://Blur'", `'${roundedBlur}'`)));
 assert.deepEqual(logged, [], 'a usable library was reported as unusable');
 const missing = await import(dataUrl(source));
@@ -72,7 +103,10 @@ assert.equal(logged.length, 1, 'an unusable library was not reported');
 
 class Settings {
     constructor(values = {}) {
-        this.values = {'dock-blur': true, 'dock-blur-sigma': 30, 'dock-blur-brightness': 0.6, ...values};
+        this.values = {
+            'dock-blur': true, 'dock-blur-sigma': 30, 'dock-blur-brightness': 0.6,
+            'dock-glass-mode': 'static', ...values,
+        };
         this.handlers = new Map();
         this._id = 0;
     }
@@ -80,6 +114,7 @@ class Settings {
     get_boolean(key) { return this.values[key]; }
     get_int(key) { return this.values[key]; }
     get_double(key) { return this.values[key]; }
+    get_string(key) { return this.values[key]; }
 
     connect(signal, callback) {
         this.handlers.set(++this._id, [signal, callback]);
@@ -106,6 +141,8 @@ function makeDash({alpha = 94, radius = 18, onStage = true} = {}) {
         _id: 0,
         onStage,
         alpha,
+        mapped: true,
+        clip_to_allocation: true,
         add_effect_with_name(name, effect) {
             assert.ok(!this.effects.has(name), `a second effect named ${name}`);
             this.effects.set(name, effect);
@@ -181,8 +218,8 @@ test('the blur takes its strength, brightness and corners from the settings and 
 });
 
 for (const [what, module] of [['missing', missing], ['installed but unusable', broken]]) {
-    test(`with gnome-rounded-blur ${what}, nothing is attached or connected`, () => {
-        const dash = makeDash();
+    test(`with gnome-rounded-blur ${what}, blur is inactive and live glass toggles cleanly`, () => {
+        const dash = makeDash({radius: 18});
         const settings = new Settings();
         const blur = new module.DockBlur(dash, settings);
         settings.set('dock-blur', false);
@@ -192,8 +229,25 @@ for (const [what, module] of [['missing', missing], ['installed but unusable', b
         assert.equal(dash._dashContainer.offscreen_redirect, 0, 'the icons were redirected');
         assert.equal(dash.children.length, 0, 'a redraw clone is attached');
         assert.equal(dash._background.handlers.size, 0, 'a style handler is connected');
-        assert.equal(settings.handlers.size, 0, 'a settings handler is connected');
+        assert.equal(settings.handlers.size, 1, 'only dock-glass-mode should be watched without Blur');
+
+        settings.set('dock-glass-mode', 'live');
+        assert.equal(
+            dash._background.effects.has(module.PILL_GLASS_EFFECT_NAME),
+            true,
+            'live pill glass should toggle without Blur'
+        );
+        assert.equal(
+            dash._background.effects.has(module.EFFECT_NAME),
+            false,
+            'blur effect must stay absent'
+        );
+
+        settings.set('dock-glass-mode', 'static');
+        assert.equal(dash._background.effects.size, 0, 'rollback to static must detach pill glass');
+        assert.equal(dash._background.handlers.size, 0, 'style watcher must disconnect on static rollback');
         blur.destroy();
+        assert.equal(settings.handlers.size, 0, 'destroy must disconnect all settings handlers');
     });
 }
 
@@ -289,4 +343,37 @@ test('the shared redraw helper takes no layout space and never picks drag target
     helper.vfunc_allocate({});
     assert.deepEqual(helper.allocation, {x1: 0, y1: 0, x2: 800, y2: 600});
     helper.vfunc_pick({push_rectangle() { assert.fail('invisible helper intercepted a drop'); }});
+});
+
+test('live pill glass mode enables squircle, hollow shadow/rim, and instant static rollback', () => {
+    const dash = makeDash({radius: 18});
+    const settings = new Settings();
+    const blur = new rounded.DockBlur(dash, settings);
+    const effect = dash._background.effects.get(rounded.EFFECT_NAME);
+    assert.equal(effect.corner_exponent, 2.0);
+    assert.equal(dash._background.effects.has(rounded.PILL_GLASS_EFFECT_NAME), false);
+    assert.equal(dash._background.clip_to_allocation, true);
+
+    settings.set('dock-glass-mode', 'live');
+    assert.equal(effect.corner_exponent, 3.0);
+    assert.equal(effect.dither, true);
+    assert.equal(effect.unmap_release_delay, 2000);
+    const pill = dash._background.effects.get(rounded.PILL_GLASS_EFFECT_NAME);
+    assert.ok(pill, 'pill glass effect not attached in live mode');
+    assert.equal(pill.cornerRadius, 18);
+    assert.equal(pill.cornerExponent, 3.0);
+    assert.equal(dash._background.clip_to_allocation, false);
+
+    // Unmapping the dock (autohide) releases blur FBO targets immediately
+    dash._background.mapped = false;
+    dash._background.emit('notify::mapped');
+    assert.equal(effect.released, 1);
+
+    // Instant rollback to static mode restores circular corners, clip, and removes pill effect
+    settings.set('dock-glass-mode', 'static');
+    assert.equal(effect.corner_exponent, 2.0);
+    assert.equal(dash._background.effects.has(rounded.PILL_GLASS_EFFECT_NAME), false);
+    assert.equal(dash._background.clip_to_allocation, true);
+    blur.destroy();
+    assert.equal(dash._background.handlers.size, 0);
 });

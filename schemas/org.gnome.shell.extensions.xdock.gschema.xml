@@ -146,6 +146,11 @@
       <summary>Brightness of the blur behind the dock</summary>
       <description>1 keeps the blurred backdrop as bright as it is; lower values darken it.</description>
     </key>
+    <key type="s" name="dock-glass-mode">
+      <default>'static'</default>
+      <summary>Glass finish mode for the dock pill</summary>
+      <description>Use 'static' for standard rounded blur or 'live' for continuous squircle blur with hollow GPU shadow, rim highlight, dark contour, and autohide GPU target release.</description>
+    </key>
     <key type="b" name="manualhide">
       <default>false</default>
       <summary>Dock not shown on desktop</summary>
