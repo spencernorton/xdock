@@ -31,6 +31,7 @@ import {
 
 import {animationsEnabled} from './animationSettings.js';
 import {IconAnimator} from './iconAnimator.js';
+import {IconDropAnimation} from './iconDropAnimation.js';
 
 // module "Dash" did not export DASH_ANIMATION_TIME in old versions
 // so we just define it like it is defined in Dash;
@@ -237,6 +238,8 @@ export const DockDash = GObject.registerClass({
         this._dragPlaceholder = null;
         this._dragPlaceholderPos = -1;
         this._animatingPlaceholdersCount = 0;
+        this._iconDrop = new IconDropAnimation();
+        this._dropAppId = null;
         this._magnifyVisible = false;
         this._magnifyCursorTracker = null;
         this._magnifyCursorId = 0;
@@ -461,6 +464,7 @@ export const DockDash = GObject.registerClass({
         [...this._magnifyReleases.values()].forEach(cancel => cancel());
         this._magnifyVisible = false;
         this._disconnectMagnifyCursor();
+        this._iconDrop.cancel();
         this._cancelMagnifyLayout();
         this._magnifyTimeline?.stop();
         this._magnifyTimeline?.disconnectObject(this);
@@ -484,6 +488,7 @@ export const DockDash = GObject.registerClass({
         // Shell's placeholder maths assumes uniform item widths, so
         // magnification must be back at rest before the first drag motion.
         this._magnifyFreezes.add('drag');
+        this._iconDrop.cancel();
         this._resetMagnify();
         return Dash.Dash.prototype._onItemDragBegin?.call(this, ...args);
     }
@@ -602,7 +607,25 @@ export const DockDash = GObject.registerClass({
         const fromLauncher = source instanceof AppLauncher.LauncherAppIcon;
         if (fromLauncher)
             this.handleDragOver(source, actor, x, y, time);
+        const hasSlot = !!this._dragPlaceholder;
         const accepted = Dash.Dash.prototype.acceptDrop?.call(this, source, actor, x, y, time);
+        if (accepted && hasSlot && actor !== source) {
+            const id = source.app.get_id();
+            const getDestination = () => this.getAppIcons()
+                .find(icon => icon.app.get_id() === id)?.getDragActorSource();
+            if (this._iconDrop.start(actor, getDestination, {
+                onStopped: () => {
+                    this._dropAppId = null;
+                    this.releaseMagnify(this._iconDrop);
+                },
+            })) {
+                this._dropAppId = id;
+                this.holdMagnify(this._iconDrop);
+                const destination = getDestination();
+                if (destination)
+                    this._iconDrop.blendDockIcon(destination);
+            }
+        }
         // A release can also beat the launcher's queued close. The source tree
         // remains alive until Shell finishes the drag, just as on handoff.
         if (accepted && fromLauncher)
@@ -1519,7 +1542,7 @@ export const DockDash = GObject.registerClass({
 
             // Don't animate item removal when the overview is transitioning
             // or hidden
-            if (!Main.overview.animationInProgress)
+            if (!Main.overview.animationInProgress && item.child.app.get_id() !== this._dropAppId)
                 item.animateOutAndDestroy();
             else
                 item.destroy();
@@ -1565,7 +1588,14 @@ export const DockDash = GObject.registerClass({
         if (!this._shownInitially)
             this._shownInitially = true;
 
-        addedItems.forEach(({item}) => item.show(animate));
+        for (const {app, item} of addedItems) {
+            // Hide the image before its first paint. The sprite supplies
+            // the entry motion, while the live item owns the indicator.
+            const landing = app.get_id() === this._dropAppId;
+            if (landing)
+                this._iconDrop.blendDockIcon(item.child.getDragActorSource());
+            item.show(animate && !landing);
+        }
 
         // Workaround for https://bugzilla.gnome.org/show_bug.cgi?id=692744
         // Without it, StBoxLayout may use a stale size cache

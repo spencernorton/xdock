@@ -49,6 +49,7 @@ import {
 import {DeferredTask} from './lifecycle.js';
 import {WholeSurfaceRedraw} from './dockBlur.js';
 import {animationsEnabled} from './animationSettings.js';
+import {IconDropAnimation} from './iconDropAnimation.js';
 import {refinePopupMotion} from './popupMenuMotion.js';
 
 import * as PopupMenuUtils from './popupMenuUtils.js';
@@ -357,6 +358,7 @@ export class AppGridLauncher {
         this._activeIconMenuIcon = null;
         this._closeRequestedWhileIconMenuOpen = null;
         this._draggingIcon = null;
+        this._drawerDrop = new IconDropAnimation();
         this._deferredCatalogRender = false;
         this._styledSelectionIndex = -1;
 
@@ -620,6 +622,7 @@ export class AppGridLauncher {
         if (this._destroyed)
             return;
 
+        this._drawerDrop.cancel();
         this._cancelDragClose();
         this._draggingIcon = icon;
         this._hideHoverLabel({animate: false});
@@ -875,13 +878,22 @@ export class AppGridLauncher {
                 this._setDropHighlight(row);
                 return DND.DragMotionResult.MOVE_DROP;
             },
-            acceptDrop: source => {
+            acceptDrop: (source, actor) => {
                 if (this._isDrawerRowDrag(source))
                     return this._acceptRowReorder(row, source);
                 this._setDropHighlight(null);
                 if (!this._canFileApp(id, source))
                     return false;
-                return this._fileAppInDrawer(id, source.app.get_id());
+                if (!this._fileAppInDrawer(id, source.app.get_id()))
+                    return false;
+
+                const getDestination = () => this._drawerRows?.get(id) === row ? row : null;
+                if (this._drawerDrop.start(actor, getDestination, {
+                    drawer: true,
+                    onStopped: () => getDestination()?.remove_style_class_name('drop-received'),
+                }))
+                    row.add_style_class_name('drop-received');
+                return true;
             },
         };
         return row;
@@ -1960,6 +1972,7 @@ export class AppGridLauncher {
     }
 
     _destroyMenu() {
+        this._drawerDrop.cancel();
         this._releaseDockMagnify({immediately: true});
         this._stopSmoothScroll();
         this._cancelDragClose();
@@ -2041,6 +2054,7 @@ export class AppGridLauncher {
             return;
         }
 
+        this._drawerDrop.cancel();
         this._releaseDockMagnify();
 
         this._stopSmoothScroll();
