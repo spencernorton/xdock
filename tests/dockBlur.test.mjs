@@ -218,8 +218,8 @@ test('the blur takes its strength, brightness and corners from the settings and 
 });
 
 for (const [what, module] of [['missing', missing], ['installed but unusable', broken]]) {
-    test(`with gnome-rounded-blur ${what}, nothing is attached or connected`, () => {
-        const dash = makeDash();
+    test(`with gnome-rounded-blur ${what}, blur is inactive and live glass toggles cleanly`, () => {
+        const dash = makeDash({radius: 18});
         const settings = new Settings();
         const blur = new module.DockBlur(dash, settings);
         settings.set('dock-blur', false);
@@ -229,8 +229,25 @@ for (const [what, module] of [['missing', missing], ['installed but unusable', b
         assert.equal(dash._dashContainer.offscreen_redirect, 0, 'the icons were redirected');
         assert.equal(dash.children.length, 0, 'a redraw clone is attached');
         assert.equal(dash._background.handlers.size, 0, 'a style handler is connected');
-        assert.equal(settings.handlers.size, 0, 'a settings handler is connected');
+        assert.equal(settings.handlers.size, 1, 'only dock-glass-mode should be watched without Blur');
+
+        settings.set('dock-glass-mode', 'live');
+        assert.equal(
+            dash._background.effects.has(module.PILL_GLASS_EFFECT_NAME),
+            true,
+            'live pill glass should toggle without Blur'
+        );
+        assert.equal(
+            dash._background.effects.has(module.EFFECT_NAME),
+            false,
+            'blur effect must stay absent'
+        );
+
+        settings.set('dock-glass-mode', 'static');
+        assert.equal(dash._background.effects.size, 0, 'rollback to static must detach pill glass');
+        assert.equal(dash._background.handlers.size, 0, 'style watcher must disconnect on static rollback');
         blur.destroy();
+        assert.equal(settings.handlers.size, 0, 'destroy must disconnect all settings handlers');
     });
 }
 

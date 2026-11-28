@@ -122,9 +122,9 @@ export class DockBlur {
         this._mappedId = 0;
         this._savedClip = null;
         this._settingsIds = [];
-        const keys = ['dock-blur', 'dock-blur-sigma', 'dock-blur-brightness', 'dock-glass-mode'];
-        if (!Blur && !this._isLiveGlassMode())
-            return;
+        const keys = ['dock-glass-mode'];
+        if (Blur)
+            keys.push('dock-blur', 'dock-blur-sigma', 'dock-blur-brightness');
         this._settingsIds = keys.map(key =>
             settings.connect(`changed::${key}`, () => this._update()));
         this._update();
