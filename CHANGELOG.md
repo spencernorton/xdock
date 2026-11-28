@@ -4,6 +4,7 @@ All notable changes to XDock are documented here.
 
 ## Unreleased
 
+- Ease dragged apps into their dock slots and shrink them into the launcher drawer that receives them, with instant drops when reduced motion is enabled.
 - Keep app highlights clear of the scrollbar in the application launcher.
 
 ## 2.4.0 — 2026-11-26

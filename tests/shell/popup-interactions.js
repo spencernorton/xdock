@@ -4,6 +4,7 @@
 // xdock-popup-test-*.desktop with Name=Popup Test NN and a symbolic icon.
 /* eslint-disable no-await-in-loop -- native input and frame observations must run in order */
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Mtk from 'gi://Mtk';
@@ -21,6 +22,52 @@ const check = (condition, message) => {
     if (!condition)
         throw new Error(message);
 };
+
+function pose(actor) {
+    const {origin, size} = actor.get_transformed_extents();
+    return {x: origin.x + size.width / 2, y: origin.y + size.height / 2, width: size.width};
+}
+
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const dropLayer = () => Main.uiGroup.get_children().find(actor => actor.name === 'xdock-icon-drop');
+
+async function recordDrop(release, getDockIcon = null) {
+    const samples = [];
+    let intercepted = false;
+    let blendDistance = 0;
+    const paintId = global.stage.connect('after-paint', () => {
+        const layer = dropLayer();
+        if (!layer || layer.opacity === 0)
+            return;
+
+        const sample = pose(layer.get_first_child());
+        samples.push(sample);
+        const dockIcon = getDockIcon?.();
+        if (dockIcon?.has_allocation() && dockIcon.get_paint_opacity() > 0)
+            blendDistance = Math.max(blendDistance, distance(sample, pose(dockIcon)));
+        const picked = global.stage.get_actor_at_pos(Clutter.PickMode.ALL, sample.x, sample.y);
+        intercepted ||= !!picked && layer.contains(picked);
+    });
+    try {
+        release();
+        await wait(550);
+    } finally {
+        global.stage.disconnect(paintId);
+    }
+    check(!intercepted, 'the settling icon must be transparent to picking');
+    check(!dropLayer(), 'the settling icon must be destroyed after the drop');
+    check(blendDistance <= 10, `the dock icon must appear only at the end of the glide: ${blendDistance}px`);
+    return samples;
+}
+
+function checkLanding(samples, destination) {
+    check(samples.length >= 3, 'the drop must paint multiple frames');
+    const last = samples.at(-1);
+    check(samples.slice(1, -1).some(sample => distance(samples[0], sample) > 0.5 &&
+        distance(sample, last) > 0.5), 'the drop must paint intermediate positions');
+    check(distance(last, pose(destination)) <= 8,
+        `the icon must arrive at the receiver: ${JSON.stringify({last, destination: pose(destination)})}`);
+}
 
 async function checkDrawerRows(launcher, open) {
     const drawers = launcher._drawers;
@@ -85,6 +132,11 @@ export async function run() {
     const launcher = manager._appLauncher;
     const favorites = global.settings.get_strv('favorite-apps');
     const settings = extension.stateObj.getSettings('org.gnome.shell.extensions.xdock');
+    const animationSettings = St.Settings.get();
+    const animationProperty = Object.getOwnPropertyDescriptor(animationSettings, 'enable_animations');
+    const forcedAnimations = global.force_animations;
+    let animations = true;
+    Object.defineProperty(animationSettings, 'enable_animations', {get: () => animations, configurable: true});
     const position = settings.get_enum('dock-position');
     const fixed = settings.get_boolean('dock-fixed');
     const dateMenuVisible = Main.panel.statusArea.dateMenu.visible;
@@ -93,6 +145,10 @@ export async function run() {
     const move = (x, y) => pointer.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
     const button = state => pointer.notify_button(GLib.get_monotonic_time(), 1, state);
     let pressed = false;
+    const release = () => {
+        button(Clutter.ButtonState.RELEASED);
+        pressed = false;
+    };
     let blur = null;
     let note = null;
     const clips = [];
@@ -102,6 +158,9 @@ export async function run() {
     await wait(150);
 
     try {
+        // Software-rendered CI inhibits animations. Exercise both modes in
+        // this private session, as the launcher motion probe does.
+        global.force_animations = true;
         settings.set_boolean('dock-fixed', true);
         settings.set_enum('dock-position', St.Side.BOTTOM);
         Main.overview.hide();
@@ -152,12 +211,13 @@ export async function run() {
         check(dropIndex !== originalIndex, 'the reorder gesture must target a different slot');
         const expectedOrder = before.filter(id => id !== draggedId);
         expectedOrder.splice(dropIndex, 0, draggedId);
-        button(Clutter.ButtonState.RELEASED);
-        pressed = false;
-        await wait(600);
+        const getReorderedImage = () => dash.getAppIcons()
+            .find(icon => icon.app.get_id() === draggedId)?.getDragActorSource();
+        const reorderFrames = await recordDrop(release, getReorderedImage);
         check(JSON.stringify(global.settings.get_strv('favorite-apps')) === JSON.stringify(expectedOrder),
             'drop must move the favorite to the placeholder position');
-        result.reorder = 'pass';
+        checkLanding(reorderFrames, getReorderedImage());
+        result.reorder = {frames: reorderFrames.length};
 
         // Shell's dash can fire a pending show-label timeout at an item it has
         // just removed; the label outlives its item until an idle. Showing or
@@ -253,15 +313,80 @@ export async function run() {
         move(100, 100);
         global.stage.set_key_focus(null);
         await wait(500);
-        let frames = 0;
-        const frameId = global.stage.connect('after-paint', () => frames++);
+        let idleFrames = 0;
+        const frameId = global.stage.connect('after-paint', () => idleFrames++);
         await wait(1000);
         global.stage.disconnect(frameId);
-        check(frames === 0, 'an idle popup must stop redrawing');
-        result.idleFrames = frames;
+        check(idleFrames === 0, 'an idle popup must stop redrawing');
+        result.idleFrames = idleFrames;
 
         await checkDrawerRows(launcher, open);
         result.drawerRows = 'pass';
+
+        const drawerId = launcher._drawers.create('Drop Animation Test');
+        const accessibility = St.ReducedMotion
+            ? new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'}) : null;
+        const previousMotion = accessibility?.get_string('reduced-motion');
+        try {
+            await wait(150);
+            const row = launcher._drawerRows.get(drawerId);
+            const dropIntoDrawer = async icon => {
+                const from = pose(icon.getDragActorSource());
+                move(from.x, from.y);
+                await wait(60);
+                pressed = true;
+                button(Clutter.ButtonState.PRESSED);
+                await wait(60);
+                move(from.x - 25, from.y + 25);
+                await wait(100);
+                check(launcher._draggingIcon === icon, 'native gesture must pick up the drawer app');
+                const to = pose(row);
+                move(to.x + 30, to.y);
+                await wait(100);
+                check(row.has_style_class_name('drop-target'), 'the drawer must advertise the drop');
+                const start = pose(icon._draggable._dragActor);
+                const frames = await recordDrop(release);
+                check(launcher.isOpen, 'filing an app must keep the launcher open');
+                check(!row.has_style_class_name('drop-target') && !row.has_style_class_name('drop-received'),
+                    'drawer feedback must clear after the drop');
+                return {frames, start};
+            };
+            const firstApp = launcher._visibleButtons[0];
+            const {frames, start} = await dropIntoDrawer(firstApp);
+            checkLanding(frames, row);
+            check(distance(frames[0], start) <= 6, 'the flight must start at the painted drag sprite');
+            check(frames.at(-1).width < frames[0].width * 0.5, 'the drawer must absorb the shrinking icon');
+            check(launcher._drawers.appIds(drawerId).includes(firstApp.app.get_id()),
+                'the animated drop must file the app');
+            const duplicate = await dropIntoDrawer(firstApp);
+            check(duplicate.frames.length === 0, 'a duplicate drop must not play a success animation');
+
+            if (accessibility)
+                accessibility.set_string('reduced-motion', 'reduce');
+            else
+                animations = false;
+            await wait(150);
+            const secondApp = launcher._visibleButtons[1];
+            const reduced = await dropIntoDrawer(secondApp);
+            check(reduced.frames.length === 0 &&
+                launcher._drawers.appIds(drawerId).includes(secondApp.app.get_id()),
+            'reduced motion must still file the app immediately without a flight');
+            result.drawerDrop = {frames: frames.length, reducedMotion: 'pass', duplicate: 'pass'};
+        } finally {
+            accessibility?.set_string('reduced-motion', previousMotion);
+            animations = true;
+            launcher._drawers.delete(drawerId);
+            await wait(200);
+        }
+
+        move(100, 100);
+        global.stage.set_key_focus(null);
+        await wait(420);
+        let drawerIdleFrames = 0;
+        const drawerPaintId = global.stage.connect('after-paint', () => drawerIdleFrames++);
+        await wait(500);
+        global.stage.disconnect(drawerPaintId);
+        check(drawerIdleFrames === 0, 'a settled drawer drop must stop redrawing');
 
         // Normal handoff, immediate release, and a vertical dock. A quick
         // release deliberately arrives without an intermediate hover frame.
@@ -288,14 +413,15 @@ export async function run() {
                 dy + (side === St.Side.BOTTOM ? box.height / 2 : 10));
             if (!fast)
                 await wait(200);
-            button(Clutter.ButtonState.RELEASED);
-            pressed = false;
-            await wait(500);
+            const getDockImage = () => manager.mainDock.dash.getAppIcons()
+                .find(item => item.app.get_id() === appId)?.getDragActorSource();
+            const frames = await recordDrop(release, getDockImage);
             check(global.settings.get_strv('favorite-apps').includes(appId), 'drop must pin the application');
             check(!launcher.isOpen, 'successful dock drop must close the launcher');
             check(!launcher._draggingIcon && !launcher._dragCloseId && launcher._idleSources.size === 0,
                 'drag completion must release sources and callbacks');
-            result.drops.push({side, fast, pinned: true});
+            checkLanding(frames, getDockImage());
+            result.drops.push({side, fast, pinned: true, frames: frames.length});
         }
         check(launcher._buttonsById.size > 0, 'the closed launcher must initially keep a warm cache');
         await wait(3400);
@@ -309,6 +435,11 @@ export async function run() {
         if (note)
             blur.remove_effect(note);
         launcher.close({animate: false});
+        if (animationProperty)
+            Object.defineProperty(animationSettings, 'enable_animations', animationProperty);
+        else
+            delete animationSettings.enable_animations;
+        global.force_animations = forcedAnimations;
         global.settings.set_strv('favorite-apps', favorites);
         settings.set_enum('dock-position', position);
         settings.set_boolean('dock-fixed', fixed);

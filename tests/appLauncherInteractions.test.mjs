@@ -41,6 +41,7 @@ export const Main = {uiGroup: {set_child_above_sibling() {}}, layoutManager: {
 const empty = dataUrl(`
 export const ParentalControlsManager = {}, SystemActions = {}, AppDrawers = {}, AppIcons = {}, Utils = {};
 export const DeferredTask = class {};
+export const IconDropAnimation = class {};
 export const WholeSurfaceRedraw = class {};
 export const Extension = {gettext: text => text};
 `);
@@ -51,6 +52,7 @@ for (const [path, replacement] of [
     ['./dependencies/shell/misc.js', empty],
     ['./lifecycle.js', empty],
     ['./dockBlur.js', empty],
+    ['./iconDropAnimation.js', empty],
     ['./animationSettings.js', dataUrl('export const animationsEnabled = () => globalThis.launcherAnimationsEnabled ?? true;')],
     ['./popupMenuMotion.js', dataUrl('export const refinePopupMotion = () => {};')],
     ['./imports.js', empty],
@@ -72,6 +74,7 @@ function launcher() {
         _dragCloseId: 0,
         _closingForDrag: false,
         _draggingIcon: {_draggable: {_queueUpdateDragHover: () => instance.repicks++}},
+        _drawerDrop: {cancel() {}},
         _containsPoint: () => false,
         _setDropHighlight() {},
         _clearDropHighlights() {},
