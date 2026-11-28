@@ -24,7 +24,8 @@ export default class XDockExtension extends Extension.Extension {
                     dockManager = null;
             },
         });
-        dockManager = manager;
+        if (!manager.destroyed)
+            dockManager = manager;
     }
 
     disable() {

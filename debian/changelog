@@ -1,3 +1,13 @@
+gnome-shell-extension-xdock (2.5.0) resolute; urgency=medium
+
+  * Share animated notification badges across the dock, Apps launcher, and
+    Trash icon with Frosted Tint and Accent Fill styles.
+  * Animate app drops into dock slots and launcher drawers, and keep launcher
+    highlights clear of the scrollbar.
+  * Eliminate idle overhead and avoid file-manager auto-start on login.
+
+ -- Norvi <apt@globalentry.systems>  Sat, 28 Nov 2026 03:25:00 +0000
+
 gnome-shell-extension-xdock (2.4.0) resolute; urgency=medium
 
   * Respect the dock's enabled state during overlapping extension reloads.
